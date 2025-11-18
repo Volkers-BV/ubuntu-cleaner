@@ -1,0 +1,33 @@
+# Log files
+*.log
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.vim/
+
+# Test/temporary files
+test/
+*.tmp
+*.temp
+
+# Local configuration
+.env
+.env.local
+config.local
+
+# Build artifacts (if any)
+dist/
+build/
