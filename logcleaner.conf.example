@@ -1,0 +1,116 @@
+# Ubuntu Log Cleaner Configuration File Example
+# Copy this file to /etc/logcleaner.conf and customize as needed
+#
+# Configuration file settings are overridden by command-line arguments
+
+################################################################################
+# Operational Modes
+################################################################################
+
+# Run in dry-run mode (preview changes without executing)
+# DRY_RUN=false
+
+# Skip interactive confirmation prompts
+# INTERACTIVE=false
+
+# Enable verbose output
+# VERBOSE=true
+
+# Suppress all non-essential output
+# QUIET=false
+
+# Create backup archive before deletion
+# CREATE_BACKUP=false
+
+# Directory for backup archives
+# BACKUP_DIR="/var/backups/logcleaner"
+
+################################################################################
+# Cleanup Configuration
+################################################################################
+
+# Age threshold for temporary files (in days)
+TEMP_FILE_AGE=7
+
+# Days to keep systemd journal logs
+JOURNAL_KEEP_DAYS=7
+
+# Number of old kernels to keep (in addition to current kernel)
+KERNEL_KEEP_COUNT=1
+
+################################################################################
+# Feature Flags - Enable/Disable Specific Cleanup Operations
+################################################################################
+
+# Standard cleanup operations (enabled by default)
+CLEANUP_KERNELS=true
+CLEANUP_JOURNAL=true
+CLEANUP_GZ_LOGS=true
+CLEANUP_APT=true
+CLEANUP_SNAP=true
+CLEANUP_TEMP=true
+
+# Advanced cleanup operations (disabled by default - opt-in)
+# WARNING: Only enable these if you understand the implications
+
+# Clean Docker containers, images, volumes, and build cache
+CLEANUP_DOCKER=false
+
+# Clean package manager caches (pip, npm, yarn)
+CLEANUP_PKG_CACHE=false
+
+# Clean systemd coredumps
+CLEANUP_COREDUMP=false
+
+# Clean thumbnail caches for all users
+CLEANUP_THUMBNAILS=false
+
+# Clean old mail (files older than 30 days)
+CLEANUP_MAIL=false
+
+################################################################################
+# Logging Configuration
+################################################################################
+
+# Enable logging to file
+LOG_TO_FILE=true
+
+# Log file location
+LOG_FILE="/var/log/logcleaner.log"
+
+# Create manifest of deleted files
+# DELETED_FILES_MANIFEST="/var/log/logcleaner-deleted-$(date +%Y%m%d).txt"
+
+################################################################################
+# Example Configurations for Different Use Cases
+################################################################################
+
+# CONSERVATIVE MODE - Minimal cleanup, maximum safety
+# TEMP_FILE_AGE=14
+# JOURNAL_KEEP_DAYS=14
+# KERNEL_KEEP_COUNT=2
+# CLEANUP_DOCKER=false
+# CLEANUP_PKG_CACHE=false
+
+# AGGRESSIVE MODE - Maximum cleanup (use with caution)
+# TEMP_FILE_AGE=3
+# JOURNAL_KEEP_DAYS=3
+# KERNEL_KEEP_COUNT=1
+# CLEANUP_DOCKER=true
+# CLEANUP_PKG_CACHE=true
+# CLEANUP_COREDUMP=true
+# CLEANUP_THUMBNAILS=true
+
+# DEVELOPMENT SERVER - Focus on dev tools cleanup
+# CLEANUP_KERNELS=false
+# CLEANUP_DOCKER=true
+# CLEANUP_PKG_CACHE=true
+# CLEANUP_THUMBNAILS=true
+
+# PRODUCTION SERVER - Conservative with comprehensive logging
+# INTERACTIVE=true
+# LOG_TO_FILE=true
+# CREATE_BACKUP=true
+# TEMP_FILE_AGE=14
+# JOURNAL_KEEP_DAYS=14
+# KERNEL_KEEP_COUNT=2

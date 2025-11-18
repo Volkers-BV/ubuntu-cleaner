@@ -1,0 +1,74 @@
+name: Generate Weekly Changelog
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      days_back:
+        description: "Number of days to look back for commits (1-365)"
+        type: choice
+        required: false
+        default: "7"
+        options:
+          - "1"
+          - "7"
+          - "14"
+          - "30"
+          - "60"
+          - "90"
+      model:
+        description: "OpenRouter AI model to use"
+        type: choice
+        required: false
+        default: "openai/gpt-5-mini"
+        options:
+          - "openai/gpt-5-mini"
+          - "openai/gpt-4o-mini"
+          - "anthropic/claude-3-haiku"
+          - "anthropic/claude-3-5-sonnet"
+          - "google/gemini-flash-1.5"
+      language:
+        description: "Output language for the changelog"
+        type: choice
+        required: false
+        default: "English"
+        options:
+          - "English"
+          - "Dutch"
+          - "German"
+          - "French"
+          - "Spanish"
+      extended:
+        description: "Enable extended analysis (file changes, statistics)"
+        type: boolean
+        required: false
+        default: false
+      force:
+        description: "Force update existing week entry"
+        type: boolean
+        required: false
+        default: false
+      dry_run:
+        description: "Preview without committing (test mode)"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Generate Weekly Changelog
+        uses: fridzema/ai-weekly-changelog-action@main
+        with:
+          openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+          days_back: ${{ inputs.days_back || '7' }}
+          model: ${{ inputs.model || 'openai/gpt-5-mini' }}
+          language: ${{ inputs.language || 'English' }}
+          extended: ${{ inputs.extended || false }}
+          force: ${{ inputs.force || false }}
+          dry_run: ${{ inputs.dry_run || false }}
