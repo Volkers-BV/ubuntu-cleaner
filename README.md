@@ -19,12 +19,25 @@ The script performs the following cleanup operations:
 - **Privileges**: Must be run as root or with sudo
 - **Dependencies**: Standard Ubuntu utilities (apt-get, journalctl, snap)
 
+## Quick Start (One-Liner)
+
+Run the script directly from GitHub without cloning:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh -o /tmp/logcleaner.sh && sudo bash /tmp/logcleaner.sh && rm /tmp/logcleaner.sh
+```
+
+This command will:
+1. Download the script to `/tmp/logcleaner.sh`
+2. Execute it with sudo
+3. Automatically remove the script after execution
+
 ## Installation
 
 1. Clone or download the script:
 ```bash
-git clone <repository-url>
-cd logcleaner
+git clone https://github.com/Volkers-BV/ubuntu-cleaner.git
+cd ubuntu-cleaner
 ```
 
 2. Make the script executable:
@@ -123,12 +136,6 @@ sudo ./logcleaner.sh
 Make the script executable:
 ```bash
 chmod +x logcleaner.sh
-```
-
-### bc Command Not Found
-The script uses `bc` for calculations. Install it if missing:
-```bash
-sudo apt-get install bc
 ```
 
 ## What Gets Cleaned
