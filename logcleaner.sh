@@ -1183,6 +1183,57 @@ cleanup_snap_revisions() {
     fi
 }
 
+# Clean snap package cache
+cleanup_snap_cache() {
+    print_header "Cleaning Snap Package Cache"
+
+    local snap_cache_dir="/var/lib/snapd/cache"
+
+    if [[ ! -d "$snap_cache_dir" ]]; then
+        print_warning "Snap cache directory not found, skipping"
+        return 0
+    fi
+
+    local size_before
+    size_before=$(get_size "$snap_cache_dir")
+
+    if (( size_before == 0 )); then
+        print_info "Snap cache is empty"
+        return 0
+    fi
+
+    local count=0
+    local freed=0
+
+    while IFS= read -r -d '' file; do
+        if [[ -f "$file" ]]; then
+            local size
+            size=$(get_size "$file")
+
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would remove: $file ($(bytes_to_human $size))"
+                freed=$((freed + size))
+                count=$((count + 1))
+            else
+                if rm -f "$file" 2>/dev/null; then
+                    log_message "INFO" "[snap-cache] Removed: $file ($(bytes_to_human $size))"
+                    freed=$((freed + size))
+                    count=$((count + 1))
+                else
+                    print_warning "Failed to remove: $file"
+                fi
+            fi
+        fi
+    done < <(find "$snap_cache_dir" -type f -print0 2>/dev/null)
+
+    if (( count > 0 )); then
+        TOTAL_FREED=$((TOTAL_FREED + freed))
+        print_success "Snap cache cleaned, freed $(bytes_to_human $freed) ($count files)"
+    else
+        print_info "No snap cache files to remove"
+    fi
+}
+
 # Clean temporary files older than 7 days
 cleanup_temp_files() {
     print_header "Cleaning Temporary Files (${TEMP_FILE_AGE}+ days old)"
