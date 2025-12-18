@@ -25,7 +25,7 @@ set -euo pipefail  # Exit on error, undefined variables, and pipe failures
 # Script Metadata
 ################################################################################
 
-readonly VERSION="2.0.0"
+readonly VERSION="3.0.0"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly CONFIG_FILE="/etc/logcleaner.conf"
