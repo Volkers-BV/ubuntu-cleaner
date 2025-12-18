@@ -69,6 +69,62 @@ CLEANUP_THUMBNAILS=false
 CLEANUP_MAIL=false
 
 ################################################################################
+# Safety Profiles (v3.0)
+################################################################################
+
+# Cleanup profile: safe, moderate, aggressive
+# - safe: Production servers, conservative cleanup
+# - moderate: Staging/dev, balanced cleanup
+# - aggressive: Maximum cleanup, disk emergencies
+CLEANUP_PROFILE="safe"
+
+################################################################################
+# New Cleanup Targets (v3.0)
+################################################################################
+
+# Clean snap package cache (/var/lib/snapd/cache/)
+CLEANUP_SNAP_CACHE=false
+
+# Clean APT package lists (/var/lib/apt/lists/)
+# Note: Run 'apt update' to refresh after cleanup
+CLEANUP_APT_LISTS=false
+
+# Clean crash reports (/var/crash/)
+CLEANUP_CRASH_REPORTS=false
+
+# Clean Netdata cache and database
+CLEANUP_NETDATA=false
+
+# Clean old Prometheus data
+CLEANUP_PROMETHEUS=false
+
+# Clean Grafana cache
+CLEANUP_GRAFANA=false
+
+# Clean Python bytecode (__pycache__)
+CLEANUP_PYCACHE=false
+
+################################################################################
+# Service Handling (v3.0)
+################################################################################
+
+# Stop monitoring services before cleanup, restart after
+STOP_SERVICES=false
+
+################################################################################
+# Age Thresholds (v3.0)
+################################################################################
+
+# Days to keep crash reports (0 = remove all)
+CRASH_REPORT_AGE=30
+
+# Days to keep Netdata database files
+NETDATA_DB_AGE=14
+
+# Days to keep Prometheus data
+PROMETHEUS_DATA_AGE=30
+
+################################################################################
 # Logging Configuration
 ################################################################################
 
@@ -114,3 +170,11 @@ LOG_FILE="/var/log/logcleaner.log"
 # TEMP_FILE_AGE=14
 # JOURNAL_KEEP_DAYS=14
 # KERNEL_KEEP_COUNT=2
+
+# PROFILE-BASED CONFIGURATION (v3.0)
+# Just set the profile and let it configure everything:
+# CLEANUP_PROFILE="moderate"
+
+# Or customize a profile with overrides:
+# CLEANUP_PROFILE="moderate"
+# CLEANUP_NETDATA=false  # Override: don't touch Netdata
