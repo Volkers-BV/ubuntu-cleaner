@@ -1658,6 +1658,97 @@ cleanup_prometheus_with_service() {
     run_with_service_control "prometheus" cleanup_prometheus
 }
 
+# Clean Grafana cache
+cleanup_grafana() {
+    print_header "Cleaning Grafana Cache"
+
+    local grafana_dir="/var/lib/grafana"
+
+    if [[ ! -d "$grafana_dir" ]]; then
+        print_warning "Grafana directory not found, skipping"
+        return 0
+    fi
+
+    local freed=0
+
+    # Clean PNG renderer cache
+    local png_dir="$grafana_dir/png"
+    if [[ -d "$png_dir" ]]; then
+        local png_size
+        png_size=$(get_size "$png_dir")
+
+        if (( png_size > 0 )); then
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would clean Grafana PNG cache: $(bytes_to_human $png_size)"
+                freed=$((freed + png_size))
+            else
+                if rm -rf "$png_dir"/* 2>/dev/null; then
+                    log_message "INFO" "[grafana] Cleaned PNG cache: $(bytes_to_human $png_size)"
+                    freed=$((freed + png_size))
+                fi
+            fi
+        fi
+    fi
+
+    # Clean old sessions (files older than 7 days)
+    local sessions_dir="$grafana_dir/sessions"
+    if [[ -d "$sessions_dir" ]]; then
+        local session_freed=0
+        local session_count=0
+
+        while IFS= read -r -d '' file; do
+            local size
+            size=$(get_size "$file")
+
+            if [[ "$DRY_RUN" == true ]]; then
+                session_freed=$((session_freed + size))
+                session_count=$((session_count + 1))
+            else
+                if rm -f "$file" 2>/dev/null; then
+                    session_freed=$((session_freed + size))
+                    session_count=$((session_count + 1))
+                fi
+            fi
+        done < <(find "$sessions_dir" -type f -mtime +7 -print0 2>/dev/null)
+
+        if (( session_count > 0 )); then
+            freed=$((freed + session_freed))
+            print_info "Cleaned $session_count old session files"
+        fi
+    fi
+
+    # Clean CSV export cache
+    local csv_dir="$grafana_dir/csv"
+    if [[ -d "$csv_dir" ]]; then
+        local csv_size
+        csv_size=$(get_size "$csv_dir")
+
+        if (( csv_size > 0 )); then
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would clean Grafana CSV cache: $(bytes_to_human $csv_size)"
+                freed=$((freed + csv_size))
+            else
+                if rm -rf "$csv_dir"/* 2>/dev/null; then
+                    log_message "INFO" "[grafana] Cleaned CSV cache: $(bytes_to_human $csv_size)"
+                    freed=$((freed + csv_size))
+                fi
+            fi
+        fi
+    fi
+
+    if (( freed > 0 )); then
+        TOTAL_FREED=$((TOTAL_FREED + freed))
+        print_success "Grafana cache cleaned, freed $(bytes_to_human $freed)"
+    else
+        print_info "No Grafana cache to clean"
+    fi
+}
+
+# Wrapper for Grafana cleanup with service control
+cleanup_grafana_with_service() {
+    run_with_service_control "grafana-server" cleanup_grafana
+}
+
 # Clean temporary files older than 7 days
 cleanup_temp_files() {
     print_header "Cleaning Temporary Files (${TEMP_FILE_AGE}+ days old)"
