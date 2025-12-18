@@ -530,6 +530,35 @@ CLEANUP OPTIONS (enable/disable specific operations):
     --only-snap             Run only snap cleanup
     --only-temp             Run only temp file cleanup
 
+PROFILE OPTIONS:
+    --profile LEVEL         Set cleanup profile: safe, moderate, aggressive
+                           (default: safe)
+
+NEW CLEANUP TARGETS (v3.0):
+    --snap-cache            Clean snap package cache (/var/lib/snapd/cache/)
+    --apt-lists             Clean APT package lists (/var/lib/apt/lists/)
+    --crash-reports         Clean crash reports (/var/crash/)
+    --netdata               Clean Netdata cache and database
+    --prometheus            Clean old Prometheus data
+    --grafana               Clean Grafana cache
+    --pycache               Clean Python bytecode (__pycache__)
+
+    --skip-snap-cache       Skip snap cache cleanup
+    --skip-apt-lists        Skip APT lists cleanup
+    --skip-crash-reports    Skip crash reports cleanup
+    --skip-netdata          Skip Netdata cleanup
+    --skip-prometheus       Skip Prometheus cleanup
+    --skip-grafana          Skip Grafana cleanup
+    --skip-pycache          Skip Python bytecode cleanup
+
+SERVICE HANDLING:
+    --stop-services         Stop monitoring services before cleanup, restart after
+
+AGE THRESHOLDS:
+    --crash-age DAYS        Age threshold for crash reports (default: 30)
+    --netdata-age DAYS      Age threshold for Netdata DB (default: 14)
+    --prometheus-age DAYS   Age threshold for Prometheus data (default: 30)
+
 CONFIGURATION:
     --config FILE           Load configuration from FILE (default: $CONFIG_FILE)
     --temp-age DAYS         Age threshold for temporary files (default: $TEMP_FILE_AGE)
@@ -562,6 +591,11 @@ CONFIGURATION FILE:
         KERNEL_KEEP_COUNT=2
         CLEANUP_DOCKER=true
         LOG_TO_FILE=true
+
+PROFILES:
+    safe        Production servers - conservative cleanup, preserves monitoring data
+    moderate    Staging/dev - balanced cleanup including monitoring caches
+    aggressive  Maximum cleanup - for disk emergencies or CI runners
 
 EXIT CODES:
     0    Success
