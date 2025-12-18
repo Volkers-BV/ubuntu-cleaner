@@ -1234,6 +1234,69 @@ cleanup_snap_cache() {
     fi
 }
 
+# Clean APT package lists
+cleanup_apt_lists() {
+    print_header "Cleaning APT Package Lists"
+
+    local apt_lists_dir="/var/lib/apt/lists"
+
+    if [[ ! -d "$apt_lists_dir" ]]; then
+        print_warning "APT lists directory not found, skipping"
+        return 0
+    fi
+
+    local size_before
+    size_before=$(get_size "$apt_lists_dir")
+
+    if (( size_before == 0 )); then
+        print_info "APT lists directory is empty"
+        return 0
+    fi
+
+    local count=0
+    local freed=0
+
+    # Remove all files except lock and partial directory
+    while IFS= read -r -d '' file; do
+        local basename
+        basename=$(basename "$file")
+
+        # Skip lock files and partial directory
+        if [[ "$basename" == "lock" ]] || [[ "$file" == *"/partial/"* ]]; then
+            continue
+        fi
+
+        if [[ -f "$file" ]]; then
+            local size
+            size=$(get_size "$file")
+
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would remove: $file ($(bytes_to_human $size))"
+                freed=$((freed + size))
+                count=$((count + 1))
+            else
+                if rm -f "$file" 2>/dev/null; then
+                    log_message "INFO" "[apt-lists] Removed: $file"
+                    freed=$((freed + size))
+                    count=$((count + 1))
+                else
+                    print_warning "Failed to remove: $file"
+                fi
+            fi
+        fi
+    done < <(find "$apt_lists_dir" -type f -print0 2>/dev/null)
+
+    if (( count > 0 )); then
+        TOTAL_FREED=$((TOTAL_FREED + freed))
+        print_success "APT lists cleaned, freed $(bytes_to_human $freed) ($count files)"
+        if [[ "$DRY_RUN" == false ]]; then
+            print_info "Note: Run 'apt update' to refresh package lists when needed"
+        fi
+    else
+        print_info "No APT list files to remove"
+    fi
+}
+
 # Clean temporary files older than 7 days
 cleanup_temp_files() {
     print_header "Cleaning Temporary Files (${TEMP_FILE_AGE}+ days old)"
