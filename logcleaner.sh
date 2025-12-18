@@ -1749,6 +1749,65 @@ cleanup_grafana_with_service() {
     run_with_service_control "grafana-server" cleanup_grafana
 }
 
+# Clean Python bytecode cache
+cleanup_pycache() {
+    print_header "Cleaning Python Bytecode Cache"
+
+    local freed=0
+    local count=0
+
+    # Directories to search for Python cache
+    local search_dirs=("/usr/local" "/opt")
+
+    for search_dir in "${search_dirs[@]}"; do
+        if [[ ! -d "$search_dir" ]]; then
+            continue
+        fi
+
+        # Find and remove __pycache__ directories
+        while IFS= read -r -d '' dir; do
+            local size
+            size=$(get_size "$dir")
+
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would remove: $dir ($(bytes_to_human $size))"
+                freed=$((freed + size))
+                count=$((count + 1))
+            else
+                if rm -rf "$dir" 2>/dev/null; then
+                    log_message "INFO" "[pycache] Removed: $dir"
+                    freed=$((freed + size))
+                    count=$((count + 1))
+                fi
+            fi
+        done < <(find "$search_dir" -type d -name "__pycache__" -print0 2>/dev/null)
+
+        # Find and remove .pyc files not in __pycache__
+        while IFS= read -r -d '' file; do
+            local size
+            size=$(get_size "$file")
+
+            if [[ "$DRY_RUN" == true ]]; then
+                freed=$((freed + size))
+                count=$((count + 1))
+            else
+                if rm -f "$file" 2>/dev/null; then
+                    log_message "INFO" "[pycache] Removed: $file"
+                    freed=$((freed + size))
+                    count=$((count + 1))
+                fi
+            fi
+        done < <(find "$search_dir" -type f -name "*.pyc" -print0 2>/dev/null)
+    done
+
+    if (( freed > 0 )); then
+        TOTAL_FREED=$((TOTAL_FREED + freed))
+        print_success "Python cache cleaned, freed $(bytes_to_human $freed) ($count items)"
+    else
+        print_info "No Python cache to clean"
+    fi
+}
+
 # Clean temporary files older than 7 days
 cleanup_temp_files() {
     print_header "Cleaning Temporary Files (${TEMP_FILE_AGE}+ days old)"
