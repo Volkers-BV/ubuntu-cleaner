@@ -2159,6 +2159,9 @@ main() {
     # Load configuration file if it exists
     load_config
 
+    # Apply safety profile
+    apply_profile
+
     # Check for root privileges
     check_root
 
@@ -2208,6 +2211,13 @@ main() {
         [[ "$CLEANUP_COREDUMP" == true ]] && echo "  - Clean systemd coredumps"
         [[ "$CLEANUP_THUMBNAILS" == true ]] && echo "  - Clean thumbnail caches"
         [[ "$CLEANUP_MAIL" == true ]] && echo "  - Clean old mail"
+        [[ "$CLEANUP_SNAP_CACHE" == true ]] && echo "  - Clean snap package cache"
+        [[ "$CLEANUP_APT_LISTS" == true ]] && echo "  - Clean APT package lists"
+        [[ "$CLEANUP_CRASH_REPORTS" == true ]] && echo "  - Clean crash reports"
+        [[ "$CLEANUP_NETDATA" == true ]] && echo "  - Clean Netdata cache/database"
+        [[ "$CLEANUP_PROMETHEUS" == true ]] && echo "  - Clean old Prometheus data"
+        [[ "$CLEANUP_GRAFANA" == true ]] && echo "  - Clean Grafana cache"
+        [[ "$CLEANUP_PYCACHE" == true ]] && echo "  - Clean Python bytecode"
         echo ""
         confirm_action "Proceed with cleanup?"
     fi
@@ -2228,6 +2238,13 @@ main() {
     [[ "$CLEANUP_COREDUMP" == true ]] && cleanup_coredumps
     [[ "$CLEANUP_THUMBNAILS" == true ]] && cleanup_thumbnails
     [[ "$CLEANUP_MAIL" == true ]] && cleanup_mail
+    [[ "$CLEANUP_SNAP_CACHE" == true ]] && cleanup_snap_cache
+    [[ "$CLEANUP_APT_LISTS" == true ]] && cleanup_apt_lists
+    [[ "$CLEANUP_CRASH_REPORTS" == true ]] && cleanup_crash_reports
+    [[ "$CLEANUP_NETDATA" == true ]] && cleanup_netdata_with_service
+    [[ "$CLEANUP_PROMETHEUS" == true ]] && cleanup_prometheus_with_service
+    [[ "$CLEANUP_GRAFANA" == true ]] && cleanup_grafana_with_service
+    [[ "$CLEANUP_PYCACHE" == true ]] && cleanup_pycache
 
     # Print summary
     print_header "Cleanup Summary"
