@@ -310,6 +310,63 @@ load_config() {
     fi
 }
 
+# Apply safety profile settings
+apply_profile() {
+    case "$CLEANUP_PROFILE" in
+        safe)
+            # Conservative - production servers
+            TEMP_FILE_AGE=14
+            JOURNAL_KEEP_DAYS=14
+            CLEANUP_SNAP_CACHE=true
+            CLEANUP_APT_LISTS=false
+            CLEANUP_CRASH_REPORTS=true
+            CRASH_REPORT_AGE=30
+            CLEANUP_NETDATA=false
+            CLEANUP_PROMETHEUS=false
+            CLEANUP_GRAFANA=false
+            CLEANUP_PYCACHE=false
+            ;;
+        moderate)
+            # Balanced - staging/dev servers
+            TEMP_FILE_AGE=7
+            JOURNAL_KEEP_DAYS=7
+            CLEANUP_SNAP_CACHE=true
+            CLEANUP_APT_LISTS=true
+            CLEANUP_CRASH_REPORTS=true
+            CRASH_REPORT_AGE=7
+            CLEANUP_NETDATA=true
+            NETDATA_DB_AGE=14
+            CLEANUP_PROMETHEUS=true
+            PROMETHEUS_DATA_AGE=30
+            CLEANUP_GRAFANA=true
+            CLEANUP_PYCACHE=false
+            ;;
+        aggressive)
+            # Maximum cleanup - emergencies, CI runners
+            TEMP_FILE_AGE=3
+            JOURNAL_KEEP_DAYS=3
+            CLEANUP_SNAP_CACHE=true
+            CLEANUP_APT_LISTS=true
+            CLEANUP_CRASH_REPORTS=true
+            CRASH_REPORT_AGE=0  # All crash reports
+            CLEANUP_NETDATA=true
+            NETDATA_DB_AGE=3
+            CLEANUP_PROMETHEUS=true
+            PROMETHEUS_DATA_AGE=7
+            CLEANUP_GRAFANA=true
+            CLEANUP_PYCACHE=true
+            ;;
+        *)
+            print_error "Unknown profile: $CLEANUP_PROFILE"
+            print_error "Valid profiles: safe, moderate, aggressive"
+            exit 1
+            ;;
+    esac
+
+    print_info "Applied profile: $CLEANUP_PROFILE"
+    log_message "INFO" "Applied cleanup profile: $CLEANUP_PROFILE"
+}
+
 # Initialize logging
 init_logging() {
     # Set up log file
