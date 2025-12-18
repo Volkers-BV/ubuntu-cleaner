@@ -62,6 +62,26 @@ CLEANUP_COREDUMP=false       # Opt-in
 CLEANUP_THUMBNAILS=false     # Opt-in
 CLEANUP_MAIL=false           # Opt-in
 
+# Safety profile (safe, moderate, aggressive)
+CLEANUP_PROFILE="safe"
+
+# New cleanup targets (v3.0)
+CLEANUP_SNAP_CACHE=false      # /var/lib/snapd/cache/
+CLEANUP_APT_LISTS=false       # /var/lib/apt/lists/
+CLEANUP_CRASH_REPORTS=false   # /var/crash/
+CLEANUP_NETDATA=false         # Netdata cache and dbengine
+CLEANUP_PROMETHEUS=false      # Prometheus old WAL/chunks
+CLEANUP_GRAFANA=false         # Grafana cache
+CLEANUP_PYCACHE=false         # Python bytecode
+
+# Service handling
+STOP_SERVICES=false           # Stop services before cleanup
+
+# Profile-specific thresholds
+CRASH_REPORT_AGE=30           # Days to keep crash reports
+NETDATA_DB_AGE=14             # Days to keep Netdata dbengine data
+PROMETHEUS_DATA_AGE=30        # Days to keep Prometheus data
+
 # Logging
 LOG_FILE=""
 LOG_TO_FILE=false
