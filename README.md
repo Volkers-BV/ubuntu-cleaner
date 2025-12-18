@@ -1,6 +1,6 @@
 # Ubuntu Log Cleaner
 
-**Version 2.0.0** - A comprehensive system maintenance script for Ubuntu servers that performs automated cleanup tasks to free disk space and maintain system health.
+**Version 3.0.0** - A comprehensive system maintenance script for Ubuntu servers that performs automated cleanup tasks to free disk space and maintain system health.
 
 ## Features
 
@@ -20,6 +20,18 @@
 - **Systemd Coredump Cleanup** - Removes old system crash dumps
 - **Thumbnail Cache Cleanup** - Clears thumbnail caches for all users
 - **Mail Queue Cleanup** - Removes old mail files (30+ days)
+
+### Safety Profiles (v3.0)
+
+- **Profile-based cleanup** - Choose `safe`, `moderate`, or `aggressive` profiles
+- **Snap cache cleanup** - Clean `/var/lib/snapd/cache/` downloaded packages
+- **APT lists cleanup** - Clean `/var/lib/apt/lists/` package indexes
+- **Crash reports cleanup** - Clean `/var/crash/` with configurable age
+- **Netdata cleanup** - Clean cache and database with service handling
+- **Prometheus cleanup** - Clean old WAL segments and chunks
+- **Grafana cleanup** - Clean PNG cache, sessions, CSV exports
+- **Python cache cleanup** - Clean `__pycache__` directories
+- **Service handling** - Optional stop/start for monitoring services
 
 ### Safety & Control Features
 
@@ -153,6 +165,27 @@ sudo ./logcleaner.sh --create-backup --backup-dir /backup/logcleaner
 - `--temp-age DAYS` - Age threshold for temporary files (default: 7)
 - `--journal-days DAYS` - Days to keep journal logs (default: 7)
 - `--kernel-keep N` - Number of old kernels to keep (default: 1)
+
+### Safety Profiles
+
+Use `--profile <level>` to select a cleanup profile:
+
+| Profile | Best For | Behavior |
+|---------|----------|----------|
+| `safe` | Production | Conservative cleanup, preserves monitoring data |
+| `moderate` | Staging/Dev | Balanced cleanup including monitoring caches |
+| `aggressive` | Emergencies | Maximum cleanup, prioritizes disk space |
+
+```bash
+# Production server
+sudo ./logcleaner.sh --yes --profile safe
+
+# Development server
+sudo ./logcleaner.sh --yes --profile moderate
+
+# Disk emergency
+sudo ./logcleaner.sh --yes --profile aggressive --stop-services
+```
 
 ### Example Output
 
@@ -337,9 +370,22 @@ This script is provided as-is for system maintenance purposes.
 
 Feel free to submit issues or pull requests for improvements.
 
-## What's New in Version 2.0.0
+## What's New in Version 3.0.0
 
 ### Major Features Added
+
+- **Safety Profiles** - `--profile safe|moderate|aggressive` for different environments
+- **Snap Cache Cleanup** - Clean downloaded snap packages
+- **APT Lists Cleanup** - Clean package index files
+- **Crash Reports Cleanup** - Clean `/var/crash/` with age threshold
+- **Netdata Cleanup** - Clean cache and database engine
+- **Prometheus Cleanup** - Clean old WAL segments and chunks
+- **Grafana Cleanup** - Clean PNG, session, and CSV caches
+- **Python Cache Cleanup** - Clean `__pycache__` directories
+- **Service Handling** - `--stop-services` for clean monitoring cleanup
+- **Override Flags** - Fine-tune profile behavior with `--skip-*` flags
+
+### What's New in Version 2.0.0
 
 - **Dry-Run Mode** - Preview changes before executing with `--dry-run`
 - **Interactive Confirmation** - User prompts before cleanup operations
@@ -349,28 +395,6 @@ Feel free to submit issues or pull requests for improvements.
 - **Selective Cleanup** - Run only specific operations with `--only-*` flags
 - **Comprehensive Logging** - Audit trail with optional deleted files manifest
 - **Lock File Protection** - Prevents multiple simultaneous instances
-- **Improved Error Handling** - Better error messages and automatic cleanup on exit
-- **TTY Detection** - Automatically disables colors in non-terminal environments
-- **Verbosity Control** - `--quiet` and `--verbose` modes
-- **Backup Support** - Optional backup creation (infrastructure in place)
-
-### Breaking Changes
-
-- Script now requires root privileges check earlier in execution
-- Interactive mode is now the default (use `--yes` to skip prompts)
-- Some internal variable names have changed (if you modified the script)
-
-### Migration from v1.x
-
-If you were using the script in cron jobs, update your crontab to include `--yes`:
-
-```bash
-# Old (v1.x)
-0 3 * * 0 /path/to/logcleaner.sh >> /var/log/logcleaner.log 2>&1
-
-# New (v2.x)
-0 3 * * 0 /path/to/logcleaner.sh --yes --log-file /var/log/logcleaner.log 2>&1
-```
 
 ## Warning
 
