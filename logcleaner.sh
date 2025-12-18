@@ -1580,6 +1580,84 @@ cleanup_netdata_with_service() {
     run_with_service_control "netdata" cleanup_netdata
 }
 
+# Clean old Prometheus data
+cleanup_prometheus() {
+    print_header "Cleaning Prometheus Data"
+
+    # Common Prometheus data directories
+    local prometheus_dir=""
+    for dir in "/var/lib/prometheus" "/var/lib/prometheus/metrics2" "/opt/prometheus/data"; do
+        if [[ -d "$dir" ]]; then
+            prometheus_dir="$dir"
+            break
+        fi
+    done
+
+    if [[ -z "$prometheus_dir" ]]; then
+        print_warning "Prometheus data directory not found, skipping"
+        return 0
+    fi
+
+    print_info "Prometheus data directory: $prometheus_dir"
+
+    local freed=0
+    local count=0
+
+    # Clean old WAL segments
+    local wal_dir="$prometheus_dir/wal"
+    if [[ -d "$wal_dir" ]]; then
+        while IFS= read -r -d '' file; do
+            local size
+            size=$(get_size "$file")
+
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would remove old WAL: $file ($(bytes_to_human $size))"
+                freed=$((freed + size))
+                count=$((count + 1))
+            else
+                if rm -f "$file" 2>/dev/null; then
+                    log_message "INFO" "[prometheus] Removed WAL: $file"
+                    freed=$((freed + size))
+                    count=$((count + 1))
+                fi
+            fi
+        done < <(find "$wal_dir" -type f -mtime +"$PROMETHEUS_DATA_AGE" -print0 2>/dev/null)
+    fi
+
+    # Clean old chunks
+    local chunks_head="$prometheus_dir/chunks_head"
+    if [[ -d "$chunks_head" ]]; then
+        while IFS= read -r -d '' file; do
+            local size
+            size=$(get_size "$file")
+
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would remove old chunk: $file ($(bytes_to_human $size))"
+                freed=$((freed + size))
+                count=$((count + 1))
+            else
+                if rm -f "$file" 2>/dev/null; then
+                    log_message "INFO" "[prometheus] Removed chunk: $file"
+                    freed=$((freed + size))
+                    count=$((count + 1))
+                fi
+            fi
+        done < <(find "$chunks_head" -type f -mtime +"$PROMETHEUS_DATA_AGE" -print0 2>/dev/null)
+    fi
+
+    if (( freed > 0 )); then
+        TOTAL_FREED=$((TOTAL_FREED + freed))
+        print_success "Prometheus cleaned, freed $(bytes_to_human $freed) ($count files)"
+    else
+        print_info "No old Prometheus data to clean"
+    fi
+}
+
+# Wrapper for Prometheus cleanup with service control
+cleanup_prometheus_with_service() {
+    run_with_service_control "prometheus" cleanup_prometheus
+}
+
 # Clean temporary files older than 7 days
 cleanup_temp_files() {
     print_header "Cleaning Temporary Files (${TEMP_FILE_AGE}+ days old)"
