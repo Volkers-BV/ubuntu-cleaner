@@ -1297,6 +1297,84 @@ cleanup_apt_lists() {
     fi
 }
 
+# Clean crash reports
+cleanup_crash_reports() {
+    print_header "Cleaning Crash Reports"
+
+    local crash_dir="/var/crash"
+
+    if [[ ! -d "$crash_dir" ]]; then
+        print_warning "Crash directory not found, skipping"
+        return 0
+    fi
+
+    local size_before
+    size_before=$(get_size "$crash_dir")
+
+    if (( size_before == 0 )); then
+        print_info "No crash reports found"
+        return 0
+    fi
+
+    local count=0
+    local freed=0
+
+    # Find crash files based on age threshold
+    local find_args=("$crash_dir" -type f -name "*.crash")
+    if (( CRASH_REPORT_AGE > 0 )); then
+        find_args+=(-mtime +"$CRASH_REPORT_AGE")
+        print_info "Removing crash reports older than $CRASH_REPORT_AGE days"
+    else
+        print_info "Removing all crash reports"
+    fi
+
+    while IFS= read -r -d '' file; do
+        if [[ -f "$file" ]]; then
+            local size
+            size=$(get_size "$file")
+
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would remove: $file ($(bytes_to_human $size))"
+                freed=$((freed + size))
+                count=$((count + 1))
+            else
+                if rm -f "$file" 2>/dev/null; then
+                    log_message "INFO" "[crash-reports] Removed: $file"
+                    freed=$((freed + size))
+                    count=$((count + 1))
+                else
+                    print_warning "Failed to remove: $file"
+                fi
+            fi
+        fi
+    done < <(find "${find_args[@]}" -print0 2>/dev/null)
+
+    # Also clean .uploaded files
+    while IFS= read -r -d '' file; do
+        if [[ -f "$file" ]]; then
+            local size
+            size=$(get_size "$file")
+
+            if [[ "$DRY_RUN" == true ]]; then
+                freed=$((freed + size))
+                count=$((count + 1))
+            else
+                if rm -f "$file" 2>/dev/null; then
+                    freed=$((freed + size))
+                    count=$((count + 1))
+                fi
+            fi
+        fi
+    done < <(find "$crash_dir" -type f -name "*.uploaded" -print0 2>/dev/null)
+
+    if (( count > 0 )); then
+        TOTAL_FREED=$((TOTAL_FREED + freed))
+        print_success "Crash reports cleaned, freed $(bytes_to_human $freed) ($count files)"
+    else
+        print_info "No crash reports to remove"
+    fi
+}
+
 # Clean temporary files older than 7 days
 cleanup_temp_files() {
     print_header "Cleaning Temporary Files (${TEMP_FILE_AGE}+ days old)"
