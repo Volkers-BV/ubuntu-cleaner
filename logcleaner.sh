@@ -1467,6 +1467,119 @@ cleanup_crash_reports() {
     fi
 }
 
+# Clean Netdata cache and database
+cleanup_netdata() {
+    print_header "Cleaning Netdata"
+
+    # Detect Netdata installation path
+    local netdata_base=""
+    local netdata_service="netdata"
+
+    if [[ -d "/opt/netdata" ]]; then
+        netdata_base="/opt/netdata"
+    elif [[ -d "/var/lib/netdata" ]]; then
+        netdata_base="/var/lib/netdata"
+    else
+        print_warning "Netdata not found, skipping"
+        return 0
+    fi
+
+    local cache_dir=""
+    local db_dir=""
+
+    if [[ "$netdata_base" == "/opt/netdata" ]]; then
+        cache_dir="$netdata_base/var/cache/netdata"
+        db_dir="$netdata_base/var/lib/netdata/dbengine"
+    else
+        cache_dir="/var/cache/netdata"
+        db_dir="$netdata_base/dbengine"
+    fi
+
+    local freed=0
+
+    # Clean cache directory
+    if [[ -d "$cache_dir" ]]; then
+        local cache_size
+        cache_size=$(get_size "$cache_dir")
+
+        if (( cache_size > 0 )); then
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would clean Netdata cache: $cache_dir ($(bytes_to_human $cache_size))"
+                freed=$((freed + cache_size))
+            else
+                print_info "Cleaning Netdata cache: $cache_dir"
+                if rm -rf "$cache_dir"/* 2>/dev/null; then
+                    log_message "INFO" "[netdata] Cleaned cache: $(bytes_to_human $cache_size)"
+                    freed=$((freed + cache_size))
+                else
+                    print_warning "Failed to clean some Netdata cache files (may be locked)"
+                fi
+            fi
+        fi
+    fi
+
+    # Clean old dbengine files
+    if [[ -d "$db_dir" ]]; then
+        local db_count=0
+        local db_freed=0
+
+        if (( NETDATA_DB_AGE > 0 )); then
+            print_info "Removing Netdata DB files older than $NETDATA_DB_AGE days"
+
+            while IFS= read -r -d '' file; do
+                local size
+                size=$(get_size "$file")
+
+                if [[ "$DRY_RUN" == true ]]; then
+                    print_dry_run "Would remove: $file ($(bytes_to_human $size))"
+                    db_freed=$((db_freed + size))
+                    db_count=$((db_count + 1))
+                else
+                    if rm -f "$file" 2>/dev/null; then
+                        log_message "INFO" "[netdata] Removed DB file: $file"
+                        db_freed=$((db_freed + size))
+                        db_count=$((db_count + 1))
+                    fi
+                fi
+            done < <(find "$db_dir" -type f -mtime +"$NETDATA_DB_AGE" -print0 2>/dev/null)
+
+            freed=$((freed + db_freed))
+
+            if (( db_count > 0 )); then
+                print_info "Removed $db_count old DB files ($(bytes_to_human $db_freed))"
+            fi
+        else
+            # Aggressive mode - clean all
+            local db_size
+            db_size=$(get_size "$db_dir")
+
+            if (( db_size > 0 )); then
+                if [[ "$DRY_RUN" == true ]]; then
+                    print_dry_run "Would clean Netdata DB: $db_dir ($(bytes_to_human $db_size))"
+                    freed=$((freed + db_size))
+                else
+                    if rm -rf "$db_dir"/* 2>/dev/null; then
+                        log_message "INFO" "[netdata] Cleaned dbengine: $(bytes_to_human $db_size)"
+                        freed=$((freed + db_size))
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    if (( freed > 0 )); then
+        TOTAL_FREED=$((TOTAL_FREED + freed))
+        print_success "Netdata cleaned, freed $(bytes_to_human $freed)"
+    else
+        print_info "No Netdata data to clean"
+    fi
+}
+
+# Wrapper for Netdata cleanup with service control
+cleanup_netdata_with_service() {
+    run_with_service_control "netdata" cleanup_netdata
+}
+
 # Clean temporary files older than 7 days
 cleanup_temp_files() {
     print_header "Cleaning Temporary Files (${TEMP_FILE_AGE}+ days old)"
