@@ -299,6 +299,98 @@ setup_error_handling() {
     trap 'print_error "Script interrupted by user"; exit 130' INT TERM
 }
 
+################################################################################
+# Service Management Helper Functions
+################################################################################
+
+# Check if a systemd service is running
+is_service_running() {
+    local service="$1"
+    systemctl is-active --quiet "$service" 2>/dev/null
+}
+
+# Stop a service gracefully
+stop_service() {
+    local service="$1"
+    local timeout="${2:-30}"
+
+    if ! is_service_running "$service"; then
+        return 0
+    fi
+
+    print_info "Stopping $service..."
+    if systemctl stop "$service" --timeout="${timeout}s" 2>/dev/null; then
+        # Wait for service to fully stop
+        local count=0
+        while is_service_running "$service" && (( count < timeout )); do
+            sleep 1
+            count=$((count + 1))
+        done
+
+        if ! is_service_running "$service"; then
+            log_message "INFO" "Service $service stopped"
+            return 0
+        fi
+    fi
+
+    print_warning "Failed to stop $service gracefully"
+    return 1
+}
+
+# Start a service
+start_service() {
+    local service="$1"
+
+    if is_service_running "$service"; then
+        return 0
+    fi
+
+    print_info "Starting $service..."
+    if systemctl start "$service" 2>/dev/null; then
+        sleep 2  # Give service time to initialize
+        if is_service_running "$service"; then
+            log_message "INFO" "Service $service started"
+            return 0
+        fi
+    fi
+
+    print_warning "Failed to start $service"
+    return 1
+}
+
+# Wrapper to run cleanup with optional service stop/start
+run_with_service_control() {
+    local service="$1"
+    local cleanup_func="$2"
+    local was_running=false
+
+    if is_service_running "$service"; then
+        was_running=true
+        if [[ "$STOP_SERVICES" == true ]]; then
+            if ! stop_service "$service"; then
+                print_warning "$service cleanup may be incomplete (service still running)"
+            fi
+        else
+            print_warning "$service is running, some files may be locked"
+            print_info "Tip: Use --stop-services for complete cleanup"
+        fi
+    fi
+
+    # Run the cleanup function
+    "$cleanup_func"
+
+    # Restart service if we stopped it
+    if [[ "$was_running" == true ]] && [[ "$STOP_SERVICES" == true ]]; then
+        if ! is_service_running "$service"; then
+            start_service "$service"
+        fi
+    fi
+}
+
+################################################################################
+# Configuration Management
+################################################################################
+
 # Load configuration from file
 load_config() {
     if [[ -f "$CONFIG_FILE" ]]; then
