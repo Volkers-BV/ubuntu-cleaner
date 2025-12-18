@@ -721,6 +721,82 @@ parse_arguments() {
                 CLEANUP_TEMP=true
                 shift
                 ;;
+            --profile)
+                CLEANUP_PROFILE="$2"
+                shift 2
+                ;;
+            --snap-cache)
+                CLEANUP_SNAP_CACHE=true
+                shift
+                ;;
+            --apt-lists)
+                CLEANUP_APT_LISTS=true
+                shift
+                ;;
+            --crash-reports)
+                CLEANUP_CRASH_REPORTS=true
+                shift
+                ;;
+            --netdata)
+                CLEANUP_NETDATA=true
+                shift
+                ;;
+            --prometheus)
+                CLEANUP_PROMETHEUS=true
+                shift
+                ;;
+            --grafana)
+                CLEANUP_GRAFANA=true
+                shift
+                ;;
+            --pycache)
+                CLEANUP_PYCACHE=true
+                shift
+                ;;
+            --skip-snap-cache)
+                CLEANUP_SNAP_CACHE=false
+                shift
+                ;;
+            --skip-apt-lists)
+                CLEANUP_APT_LISTS=false
+                shift
+                ;;
+            --skip-crash-reports)
+                CLEANUP_CRASH_REPORTS=false
+                shift
+                ;;
+            --skip-netdata)
+                CLEANUP_NETDATA=false
+                shift
+                ;;
+            --skip-prometheus)
+                CLEANUP_PROMETHEUS=false
+                shift
+                ;;
+            --skip-grafana)
+                CLEANUP_GRAFANA=false
+                shift
+                ;;
+            --skip-pycache)
+                CLEANUP_PYCACHE=false
+                shift
+                ;;
+            --stop-services)
+                STOP_SERVICES=true
+                shift
+                ;;
+            --crash-age)
+                CRASH_REPORT_AGE="$2"
+                shift 2
+                ;;
+            --netdata-age)
+                NETDATA_DB_AGE="$2"
+                shift 2
+                ;;
+            --prometheus-age)
+                PROMETHEUS_DATA_AGE="$2"
+                shift 2
+                ;;
             *)
                 print_error "Unknown option: $1"
                 echo "Run '$SCRIPT_NAME --help' for usage information"
