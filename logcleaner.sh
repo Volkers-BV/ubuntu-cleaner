@@ -25,7 +25,7 @@ set -euo pipefail  # Exit on error, undefined variables, and pipe failures
 # Script Metadata
 ################################################################################
 
-readonly VERSION="3.0.1"
+readonly VERSION="3.0.2"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="/etc/logcleaner.conf"
@@ -1066,8 +1066,11 @@ cleanup_old_kernels() {
                 version_freed=$((version_freed + size_before))
                 count=$((count + 1))
             else
-                print_info "Removing: $pkg"
-                if DEBIAN_FRONTEND=noninteractive apt-get purge -y "$pkg" >/dev/null 2>&1; then
+                print_status "Removing: $pkg"
+                if DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+                    -o Dpkg::Options::=--force-confdef \
+                    -o Dpkg::Options::=--force-confold \
+                    "$pkg" >/dev/null 2>&1; then
                     version_freed=$((version_freed + size_before))
                     count=$((count + 1))
                 else
