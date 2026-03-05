@@ -1,6 +1,6 @@
 # Ubuntu Log Cleaner
 
-**Version 3.0.0** - A comprehensive system maintenance script for Ubuntu servers that performs automated cleanup tasks to free disk space and maintain system health.
+**Version 3.0.1** - A comprehensive system maintenance script for Ubuntu servers that performs automated cleanup tasks to free disk space and maintain system health.
 
 ## Features
 
@@ -55,13 +55,13 @@
 Run the script directly from GitHub without cloning:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh -o /tmp/logcleaner.sh && sudo bash /tmp/logcleaner.sh && rm /tmp/logcleaner.sh
+curl -fsSL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh -o /tmp/logcleaner.sh && sudo bash /tmp/logcleaner.sh --yes; rm -f /tmp/logcleaner.sh
 ```
 
 This command will:
 1. Download the script to `/tmp/logcleaner.sh`
-2. Execute it with sudo
-3. Automatically remove the script after execution
+2. Execute it with sudo (non-interactive via `--yes`)
+3. Clean up the script afterwards (even if the script exits non-zero)
 
 ## Installation
 

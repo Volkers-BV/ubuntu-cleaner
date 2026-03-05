@@ -25,10 +25,10 @@ set -euo pipefail  # Exit on error, undefined variables, and pipe failures
 # Script Metadata
 ################################################################################
 
-readonly VERSION="3.0.0"
+readonly VERSION="3.0.1"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-readonly CONFIG_FILE="/etc/logcleaner.conf"
+CONFIG_FILE="/etc/logcleaner.conf"
 readonly LOCK_FILE="/var/run/logcleaner.pid"
 readonly DEFAULT_LOG_FILE="/var/log/logcleaner.log"
 
@@ -86,6 +86,13 @@ PROMETHEUS_DATA_AGE=30        # Days to keep Prometheus data
 LOG_FILE=""
 LOG_TO_FILE=false
 DELETED_FILES_MANIFEST=""
+
+# Track which settings were explicitly set by CLI args (to avoid profile overwrite)
+_USER_SET_TEMP_FILE_AGE=false
+_USER_SET_JOURNAL_KEEP_DAYS=false
+_USER_SET_CRASH_REPORT_AGE=false
+_USER_SET_NETDATA_DB_AGE=false
+_USER_SET_PROMETHEUS_DATA_AGE=false
 
 # Runtime state
 TOTAL_FREED=0
@@ -199,6 +206,18 @@ print_info() {
     log_message "INFO" "$msg"
 }
 
+print_status() {
+    local msg="$1"
+    [[ "$QUIET" == true ]] && return
+
+    if [[ "$USE_COLORS" == true ]]; then
+        echo -e "${BLUE}ℹ $msg${NC}"
+    else
+        echo "ℹ $msg"
+    fi
+    log_message "INFO" "$msg"
+}
+
 print_dry_run() {
     local msg="$1"
     [[ "$QUIET" == true ]] && return
@@ -211,24 +230,18 @@ print_dry_run() {
     log_message "DRY-RUN" "$msg"
 }
 
-# Convert bytes to human-readable format
+# Convert bytes to human-readable format (pure bash, no subprocesses)
 bytes_to_human() {
     local bytes=$1
-    # Use numfmt (coreutils) instead of bc to avoid extra dependency
-    if command -v numfmt &> /dev/null; then
-        numfmt --to=iec-i --suffix=B "$bytes" 2>/dev/null || echo "${bytes}B"
+    if (( bytes < 1024 )); then
+        echo "${bytes}B"
+    elif (( bytes < 1048576 )); then
+        echo "$(( bytes / 1024 ))KB"
+    elif (( bytes < 1073741824 )); then
+        echo "$(( bytes / 1048576 ))MB"
     else
-        # Fallback to pure bash if numfmt isn't available
-        if (( bytes < 1024 )); then
-            echo "${bytes}B"
-        elif (( bytes < 1048576 )); then
-            echo "$(( bytes / 1024 ))KB"
-        elif (( bytes < 1073741824 )); then
-            echo "$(( bytes / 1048576 ))MB"
-        else
-            # Use awk instead of bc for decimal division
-            printf "%.2fGB\n" "$(awk "BEGIN {print $bytes / 1073741824}")"
-        fi
+        # Use awk for decimal division only for GB+ sizes
+        printf "%.2fGB\n" "$(awk "BEGIN {print $bytes / 1073741824}")"
     fi
 }
 
@@ -236,7 +249,13 @@ bytes_to_human() {
 get_size() {
     local path=$1
     if [[ -e "$path" ]]; then
-        du -sb "$path" 2>/dev/null | awk '{print $1}' || echo "0"
+        if [[ -f "$path" ]]; then
+            # For files, use stat (single syscall, no subprocess for awk)
+            stat --format='%s' "$path" 2>/dev/null || echo "0"
+        else
+            # For directories, du is needed to recurse
+            du -sb "$path" 2>/dev/null | awk '{print $1}' || echo "0"
+        fi
     else
         echo "0"
     fi
@@ -407,12 +426,12 @@ apply_profile() {
     case "$CLEANUP_PROFILE" in
         safe)
             # Conservative - production servers
-            TEMP_FILE_AGE=14
-            JOURNAL_KEEP_DAYS=14
+            [[ "$_USER_SET_TEMP_FILE_AGE" == false ]] && TEMP_FILE_AGE=14
+            [[ "$_USER_SET_JOURNAL_KEEP_DAYS" == false ]] && JOURNAL_KEEP_DAYS=14
             CLEANUP_SNAP_CACHE=true
             CLEANUP_APT_LISTS=false
             CLEANUP_CRASH_REPORTS=true
-            CRASH_REPORT_AGE=30
+            [[ "$_USER_SET_CRASH_REPORT_AGE" == false ]] && CRASH_REPORT_AGE=30
             CLEANUP_NETDATA=false
             CLEANUP_PROMETHEUS=false
             CLEANUP_GRAFANA=false
@@ -420,31 +439,31 @@ apply_profile() {
             ;;
         moderate)
             # Balanced - staging/dev servers
-            TEMP_FILE_AGE=7
-            JOURNAL_KEEP_DAYS=7
+            [[ "$_USER_SET_TEMP_FILE_AGE" == false ]] && TEMP_FILE_AGE=7
+            [[ "$_USER_SET_JOURNAL_KEEP_DAYS" == false ]] && JOURNAL_KEEP_DAYS=7
             CLEANUP_SNAP_CACHE=true
             CLEANUP_APT_LISTS=true
             CLEANUP_CRASH_REPORTS=true
-            CRASH_REPORT_AGE=7
+            [[ "$_USER_SET_CRASH_REPORT_AGE" == false ]] && CRASH_REPORT_AGE=7
             CLEANUP_NETDATA=true
-            NETDATA_DB_AGE=14
+            [[ "$_USER_SET_NETDATA_DB_AGE" == false ]] && NETDATA_DB_AGE=14
             CLEANUP_PROMETHEUS=true
-            PROMETHEUS_DATA_AGE=30
+            [[ "$_USER_SET_PROMETHEUS_DATA_AGE" == false ]] && PROMETHEUS_DATA_AGE=30
             CLEANUP_GRAFANA=true
             CLEANUP_PYCACHE=false
             ;;
         aggressive)
             # Maximum cleanup - emergencies, CI runners
-            TEMP_FILE_AGE=3
-            JOURNAL_KEEP_DAYS=3
+            [[ "$_USER_SET_TEMP_FILE_AGE" == false ]] && TEMP_FILE_AGE=3
+            [[ "$_USER_SET_JOURNAL_KEEP_DAYS" == false ]] && JOURNAL_KEEP_DAYS=3
             CLEANUP_SNAP_CACHE=true
             CLEANUP_APT_LISTS=true
             CLEANUP_CRASH_REPORTS=true
-            CRASH_REPORT_AGE=0  # All crash reports
+            [[ "$_USER_SET_CRASH_REPORT_AGE" == false ]] && CRASH_REPORT_AGE=0  # All crash reports
             CLEANUP_NETDATA=true
-            NETDATA_DB_AGE=3
+            [[ "$_USER_SET_NETDATA_DB_AGE" == false ]] && NETDATA_DB_AGE=3
             CLEANUP_PROMETHEUS=true
-            PROMETHEUS_DATA_AGE=7
+            [[ "$_USER_SET_PROMETHEUS_DATA_AGE" == false ]] && PROMETHEUS_DATA_AGE=7
             CLEANUP_GRAFANA=true
             CLEANUP_PYCACHE=true
             ;;
@@ -763,10 +782,12 @@ parse_arguments() {
                 ;;
             --temp-age)
                 TEMP_FILE_AGE="$2"
+                _USER_SET_TEMP_FILE_AGE=true
                 shift 2
                 ;;
             --journal-days)
                 JOURNAL_KEEP_DAYS="$2"
+                _USER_SET_JOURNAL_KEEP_DAYS=true
                 shift 2
                 ;;
             --kernel-keep)
@@ -913,14 +934,17 @@ parse_arguments() {
                 ;;
             --crash-age)
                 CRASH_REPORT_AGE="$2"
+                _USER_SET_CRASH_REPORT_AGE=true
                 shift 2
                 ;;
             --netdata-age)
                 NETDATA_DB_AGE="$2"
+                _USER_SET_NETDATA_DB_AGE=true
                 shift 2
                 ;;
             --prometheus-age)
                 PROMETHEUS_DATA_AGE="$2"
+                _USER_SET_PROMETHEUS_DATA_AGE=true
                 shift 2
                 ;;
             *)
@@ -974,7 +998,7 @@ cleanup_old_kernels() {
 
     local current_kernel
     current_kernel=$(uname -r)
-    print_info "Current kernel: $current_kernel"
+    print_status "Current kernel: $current_kernel"
 
     # Collect installed kernel-related packages (images/modules/headers)
     local kernel_packages
@@ -1075,7 +1099,7 @@ cleanup_journal() {
     local size_before
     size_before=$(get_size /var/log/journal)
 
-    print_info "Journal size before: $(bytes_to_human $size_before)"
+    print_status "Journal size before: $(bytes_to_human $size_before)"
 
     if [[ "$DRY_RUN" == true ]]; then
         print_dry_run "Would vacuum journal (keep last ${JOURNAL_KEEP_DAYS} days)"
@@ -1182,7 +1206,7 @@ cleanup_apt_cache() {
         export DEBIAN_FRONTEND=noninteractive
         local dpkg_opts="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
-        print_info "Running apt-get clean..."
+        print_status "Running apt-get clean..."
         apt-get clean $dpkg_opts >/dev/null 2>&1
 
         print_info "Running apt-get autoclean..."
@@ -1820,7 +1844,7 @@ cleanup_temp_files() {
         local dir=$1
         [[ ! -d "$dir" ]] && return
 
-        print_info "Cleaning $dir..."
+        print_status "Cleaning $dir..."
 
         # Remove files, symlinks, sockets, and FIFOs
         while IFS= read -r -d '' entry; do
@@ -1892,7 +1916,7 @@ cleanup_docker() {
         return 0
     fi
 
-    print_info "Running docker system prune..."
+    print_status "Running docker system prune..."
     local docker_output
     docker_output=$(docker system prune -af --volumes 2>&1 || echo "")
 
@@ -2084,7 +2108,7 @@ cleanup_thumbnails() {
                 print_dry_run "Would remove thumbnails from $dir ($(bytes_to_human $size))"
                 freed=$((freed + size))
             else
-                print_info "Cleaning $dir..."
+                print_status "Cleaning $dir..."
                 if rm -rf "$dir"/* 2>/dev/null; then
                     freed=$((freed + size))
                     print_success "Cleaned $dir, freed $(bytes_to_human $size)"
@@ -2149,6 +2173,11 @@ cleanup_mail() {
 main() {
     # Parse command-line arguments first
     parse_arguments "$@"
+
+    # Auto-disable interactive mode when stdin is not a terminal (e.g., piped one-liner)
+    if [[ "$INTERACTIVE" == true ]] && [[ ! -t 0 ]]; then
+        INTERACTIVE=false
+    fi
 
     # Initialize colors based on TTY detection
     init_colors
@@ -2222,8 +2251,8 @@ main() {
         confirm_action "Proceed with cleanup?"
     fi
 
-    print_info "Starting cleanup process..."
-    print_info "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
+    print_status "Starting cleanup process..."
+    print_status "Start time: $(date '+%Y-%m-%d %H:%M:%S')"
     DISK_USED_BEFORE=$(get_used_space)
 
     # Execute cleanup functions based on feature flags
@@ -2248,7 +2277,7 @@ main() {
 
     # Print summary
     print_header "Cleanup Summary"
-    print_info "End time: $(date '+%Y-%m-%d %H:%M:%S')"
+    print_status "End time: $(date '+%Y-%m-%d %H:%M:%S')"
 
     if [[ "$DRY_RUN" == false ]]; then
         local disk_used_after
@@ -2270,7 +2299,7 @@ main() {
             fi
             print_success "Cleanup completed successfully!"
         else
-            print_info "No space was freed - system is already clean"
+            print_status "No space was freed - system is already clean"
             print_success "Cleanup completed!"
         fi
     else
@@ -2287,7 +2316,7 @@ main() {
             fi
             print_success "Dry run completed!"
         else
-            print_info "No files would be removed"
+            print_status "No files would be removed"
         fi
     fi
 
