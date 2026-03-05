@@ -1067,7 +1067,7 @@ cleanup_old_kernels() {
                 count=$((count + 1))
             else
                 print_info "Removing: $pkg"
-                if apt-get purge -y "$pkg" >/dev/null 2>&1; then
+                if DEBIAN_FRONTEND=noninteractive apt-get purge -y "$pkg" >/dev/null 2>&1; then
                     version_freed=$((version_freed + size_before))
                     count=$((count + 1))
                 else
@@ -1202,8 +1202,6 @@ cleanup_apt_cache() {
             print_dry_run "Estimated space to free: $(bytes_to_human $estimated_freed)"
         fi
     else
-        # Set non-interactive mode to prevent prompts
-        export DEBIAN_FRONTEND=noninteractive
         local dpkg_opts="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
         print_status "Running apt-get clean..."
@@ -2178,6 +2176,9 @@ main() {
     if [[ "$INTERACTIVE" == true ]] && [[ ! -t 0 ]]; then
         INTERACTIVE=false
     fi
+
+    # Prevent apt/dpkg interactive prompts (e.g., debconf, config file questions)
+    export DEBIAN_FRONTEND=noninteractive
 
     # Initialize colors based on TTY detection
     init_colors
