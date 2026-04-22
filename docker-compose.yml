@@ -1,0 +1,36 @@
+services:
+  test-1804:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.base
+      args:
+        UBUNTU_VERSION: "18.04"
+    command: bats --recursive tests/
+    privileged: true
+
+  test-2004:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.base
+      args:
+        UBUNTU_VERSION: "20.04"
+    command: bats --recursive tests/
+    privileged: true
+
+  test-2204:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.base
+      args:
+        UBUNTU_VERSION: "22.04"
+    command: bats --recursive tests/
+    privileged: true
+
+  test-2404:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.base
+      args:
+        UBUNTU_VERSION: "24.04"
+    command: bats --recursive tests/
+    privileged: true
