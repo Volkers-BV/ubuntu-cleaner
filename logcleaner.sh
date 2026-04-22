@@ -41,9 +41,6 @@ DRY_RUN=false
 INTERACTIVE=true
 VERBOSE=false
 QUIET=false
-CREATE_BACKUP=false
-BACKUP_DIR="/var/backups/logcleaner"
-
 # Cleanup configuration
 TEMP_FILE_AGE=7              # Days to keep temp files
 JOURNAL_KEEP_DAYS=7          # Days to keep journal logs
@@ -552,31 +549,6 @@ confirm_action() {
     esac
 }
 
-# Create backup of files before deletion
-create_backup_archive() {
-    [[ "$CREATE_BACKUP" == false ]] && return 0
-
-    local backup_name="logcleaner-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
-    local backup_path="$BACKUP_DIR/$backup_name"
-
-    print_info "Creating backup at $backup_path..."
-
-    # Create backup directory if it doesn't exist
-    if [[ ! -d "$BACKUP_DIR" ]]; then
-        mkdir -p "$BACKUP_DIR" 2>/dev/null || {
-            print_warning "Could not create backup directory $BACKUP_DIR, skipping backup"
-            return 1
-        }
-    fi
-
-    # TODO: Implement actual backup of files to be deleted
-    # This is a placeholder - actual implementation will be added when we modify cleanup functions
-
-    print_info "Backup created: $backup_path"
-    log_message "INFO" "Backup created at $backup_path"
-    return 0
-}
-
 # Basic environment validation
 preflight_checks() {
     local os_id="unknown"
@@ -621,9 +593,6 @@ OPTIONS:
     --log-file FILE         Write logs to specified file (default: $DEFAULT_LOG_FILE)
     --no-log                Disable file logging
     --manifest FILE         Write list of deleted files to FILE
-
-    --create-backup         Create backup archive before deletion
-    --backup-dir DIR        Backup directory (default: $BACKUP_DIR)
 
 CLEANUP OPTIONS (enable/disable specific operations):
     --skip-kernels          Skip old kernel cleanup
@@ -697,9 +666,6 @@ EXAMPLES:
 
     # Run only Docker and package cache cleanup
     sudo $SCRIPT_NAME --only-docker --pkg-cache
-
-    # Create backup before cleanup
-    sudo $SCRIPT_NAME --create-backup --backup-dir /backup/logcleaner
 
     # Clean with custom retention periods
     sudo $SCRIPT_NAME --temp-age 14 --journal-days 3
@@ -781,14 +747,6 @@ parse_arguments() {
                 ;;
             --manifest)
                 DELETED_FILES_MANIFEST="$2"
-                shift 2
-                ;;
-            --create-backup)
-                CREATE_BACKUP=true
-                shift
-                ;;
-            --backup-dir)
-                BACKUP_DIR="$2"
                 shift 2
                 ;;
             --config)
