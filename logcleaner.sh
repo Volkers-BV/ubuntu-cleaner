@@ -94,6 +94,11 @@ _USER_SET_CRASH_REPORT_AGE=false
 _USER_SET_NETDATA_DB_AGE=false
 _USER_SET_PROMETHEUS_DATA_AGE=false
 
+# Analysis mode
+ANALYZE_MODE=false
+REPORT_FILE=""
+declare -A _ANALYSIS_ESTIMATES
+
 # Runtime state
 TOTAL_FREED=0
 DISK_USED_BEFORE=0
@@ -676,6 +681,10 @@ CONFIGURATION:
     --journal-days DAYS     Days to keep journal logs (default: $JOURNAL_KEEP_DAYS)
     --kernel-keep N         Number of old kernels to keep (default: $KERNEL_KEEP_COUNT)
 
+ANALYSIS MODE:
+    --analyze               Run read-only system analysis (no changes made)
+    --report-file FILE      Write analysis report to FILE (default: stdout only)
+
 EXAMPLES:
     # Run with default settings (interactive)
     sudo $SCRIPT_NAME
@@ -694,6 +703,12 @@ EXAMPLES:
 
     # Clean with custom retention periods
     sudo $SCRIPT_NAME --temp-age 14 --journal-days 3
+
+    # Run read-only system analysis
+    sudo $SCRIPT_NAME --analyze
+
+    # Save analysis report to file
+    sudo $SCRIPT_NAME --analyze --report-file /tmp/analysis.txt
 
 CONFIGURATION FILE:
     You can create a configuration file at $CONFIG_FILE with:
@@ -945,6 +960,14 @@ parse_arguments() {
             --prometheus-age)
                 PROMETHEUS_DATA_AGE="$2"
                 _USER_SET_PROMETHEUS_DATA_AGE=true
+                shift 2
+                ;;
+            --analyze)
+                ANALYZE_MODE=true
+                shift
+                ;;
+            --report-file)
+                REPORT_FILE="$2"
                 shift 2
                 ;;
             *)
@@ -2178,6 +2201,13 @@ main() {
     # Auto-disable interactive mode when stdin is not a terminal (e.g., piped one-liner)
     if [[ "$INTERACTIVE" == true ]] && [[ ! -t 0 ]]; then
         INTERACTIVE=false
+    fi
+
+    # Analysis mode bypasses all cleanup logic
+    if [[ "$ANALYZE_MODE" == true ]]; then
+        check_root
+        run_analysis
+        exit 0
     fi
 
     # Prevent apt/dpkg interactive prompts (e.g., debconf, config file questions)
