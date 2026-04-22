@@ -2312,8 +2312,8 @@ analyze_journal() {
     fi
 
     report_line ""
-    report_line "  Vacuum estimate (keep 7 days):"
-    journalctl --vacuum-time=7d --dry-run 2>&1 | while IFS= read -r line; do report_line "    $line"; done
+    report_line "  Current disk usage:"
+    journalctl --disk-usage 2>/dev/null | while IFS= read -r line; do report_line "    $line"; done
 
     local estimated_freed=$(( journal_size * 30 / 100 ))
     record_estimate "Journal vacuum (7d)" "$estimated_freed"
@@ -2386,7 +2386,7 @@ analyze_kernels() {
     done <<< "$kernel_packages"
 
     report_line ""
-    report_kv "Estimated removable" "$(bytes_to_human "$removable_size") (keeping current + 1)"
+    report_kv "Estimated removable" "$(bytes_to_human "$removable_size") (all non-current)"
 
     record_estimate "Old kernels" "$removable_size"
 }
@@ -2492,6 +2492,13 @@ analyze_docker() {
     report_line ""
     report_line "  Docker disk usage:"
     docker system df 2>/dev/null | while IFS= read -r line; do report_line "    $line"; done
+
+    local reclaimable_line
+    reclaimable_line=$(docker system df 2>/dev/null | grep -oE '[0-9.]+ [KMGT]?B \(reclaimable\)' | tail -1 || true)
+    if [[ -n "$reclaimable_line" ]]; then
+        report_line ""
+        report_kv "Total reclaimable" "$reclaimable_line"
+    fi
 }
 
 analyze_summary() {
