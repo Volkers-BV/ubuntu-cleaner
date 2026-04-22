@@ -25,7 +25,7 @@ set -euo pipefail  # Exit on error, undefined variables, and pipe failures
 # Script Metadata
 ################################################################################
 
-readonly VERSION="3.0.2"
+readonly VERSION="3.1.0"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="/etc/logcleaner.conf"
@@ -93,6 +93,11 @@ _USER_SET_JOURNAL_KEEP_DAYS=false
 _USER_SET_CRASH_REPORT_AGE=false
 _USER_SET_NETDATA_DB_AGE=false
 _USER_SET_PROMETHEUS_DATA_AGE=false
+
+# Analysis mode
+ANALYZE_MODE=false
+REPORT_FILE=""
+declare -A _ANALYSIS_ESTIMATES
 
 # Runtime state
 TOTAL_FREED=0
@@ -676,6 +681,10 @@ CONFIGURATION:
     --journal-days DAYS     Days to keep journal logs (default: $JOURNAL_KEEP_DAYS)
     --kernel-keep N         Number of old kernels to keep (default: $KERNEL_KEEP_COUNT)
 
+ANALYSIS MODE:
+    --analyze               Run read-only system analysis (no changes made)
+    --report-file FILE      Write analysis report to FILE (default: stdout only)
+
 EXAMPLES:
     # Run with default settings (interactive)
     sudo $SCRIPT_NAME
@@ -694,6 +703,12 @@ EXAMPLES:
 
     # Clean with custom retention periods
     sudo $SCRIPT_NAME --temp-age 14 --journal-days 3
+
+    # Run read-only system analysis
+    sudo $SCRIPT_NAME --analyze
+
+    # Save analysis report to file
+    sudo $SCRIPT_NAME --analyze --report-file /tmp/analysis.txt
 
 CONFIGURATION FILE:
     You can create a configuration file at $CONFIG_FILE with:
@@ -945,6 +960,14 @@ parse_arguments() {
             --prometheus-age)
                 PROMETHEUS_DATA_AGE="$2"
                 _USER_SET_PROMETHEUS_DATA_AGE=true
+                shift 2
+                ;;
+            --analyze)
+                ANALYZE_MODE=true
+                shift
+                ;;
+            --report-file)
+                REPORT_FILE="$2"
                 shift 2
                 ;;
             *)
@@ -2168,6 +2191,381 @@ cleanup_mail() {
 }
 
 ################################################################################
+# Analysis Mode
+################################################################################
+
+# Write a line to stdout and optionally to REPORT_FILE
+report_line() {
+    local line="$1"
+    echo "$line"
+    if [[ -n "$REPORT_FILE" ]]; then
+        echo "$line" >> "$REPORT_FILE"
+    fi
+}
+
+report_section() {
+    local title="$1"
+    report_line ""
+    report_line "======================================================="
+    report_line "  $title"
+    report_line "======================================================="
+}
+
+report_kv() {
+    local key="$1"
+    local value="$2"
+    report_line "$(printf '  %-35s %s' "$key:" "$value")"
+}
+
+# Record an estimate for the summary (label, bytes)
+record_estimate() {
+    local label="$1"
+    local bytes="$2"
+    _ANALYSIS_ESTIMATES["$label"]="$bytes"
+}
+
+analyze_disk() {
+    report_section "DISK USAGE"
+
+    report_line ""
+    report_line "  Filesystem overview:"
+    df -h --output=source,size,used,avail,pcent,target 2>/dev/null \
+        | grep -v tmpfs \
+        | grep -v udev \
+        | while IFS= read -r line; do report_line "    $line"; done
+
+    report_line ""
+    report_line "  Top 20 directories by size (/):"
+    du -xh --max-depth=3 / 2>/dev/null \
+        | sort -rh \
+        | head -20 \
+        | while IFS= read -r line; do report_line "    $line"; done
+}
+
+analyze_large_files() {
+    report_section "LARGE FILES (>100MB)"
+
+    report_line ""
+    report_line "  Files larger than 100MB across filesystem:"
+
+    local count=0
+    while IFS= read -r line; do
+        report_line "    $line"
+        count=$((count + 1))
+    done < <(find / -xdev -type f -size +100M -printf '%s\t%p\n' 2>/dev/null \
+        | sort -rn \
+        | head -30 \
+        | awk '{printf "%s\t%s\n", ($1 >= 1073741824 ? sprintf("%.1fGB", $1/1073741824) : sprintf("%.0fMB", $1/1048576)), $2}')
+
+    if (( count == 0 )); then
+        report_line "    (none found)"
+    fi
+}
+
+analyze_logs() {
+    report_section "LOG FILES (/var/log)"
+
+    if [[ ! -d /var/log ]]; then
+        report_line "  /var/log not found"
+        return
+    fi
+
+    local total_size
+    total_size=$(du -sb /var/log 2>/dev/null | awk '{print $1}')
+    report_kv "Total /var/log size" "$(bytes_to_human "${total_size:-0}")"
+
+    local gz_count gz_size
+    gz_count=$(find /var/log -name "*.gz" -type f 2>/dev/null | wc -l)
+    gz_size=$(find /var/log -name "*.gz" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    report_kv "Compressed (.gz) files" "$gz_count files ($(bytes_to_human "$gz_size"))"
+
+    report_line ""
+    report_line "  Top 20 log files by size:"
+    find /var/log -type f -printf '%s\t%p\n' 2>/dev/null \
+        | sort -rn \
+        | head -20 \
+        | awk '{printf "    %s\t%s\n", ($1 >= 1073741824 ? sprintf("%.1fGB", $1/1073741824) : $1 >= 1048576 ? sprintf("%.0fMB", $1/1048576) : sprintf("%.0fKB", $1/1024)), $2}' \
+        | while IFS= read -r line; do report_line "$line"; done
+
+    record_estimate "Compressed .gz logs" "$gz_size"
+}
+
+analyze_journal() {
+    report_section "SYSTEMD JOURNAL"
+
+    if ! command -v journalctl &>/dev/null; then
+        report_line "  journalctl not found"
+        return
+    fi
+
+    local journal_size
+    journal_size=$(get_size /var/log/journal)
+    report_kv "Journal size" "$(bytes_to_human "$journal_size")"
+
+    local conf_file="/etc/systemd/journald.conf"
+    if [[ -f "$conf_file" ]]; then
+        report_line ""
+        report_line "  journald.conf active settings:"
+        grep -v '^\s*#' "$conf_file" | grep -v '^\s*$' | while IFS= read -r line; do
+            report_line "    $line"
+        done
+    fi
+
+    report_line ""
+    report_line "  Current disk usage:"
+    journalctl --disk-usage 2>/dev/null | while IFS= read -r line; do report_line "    $line"; done
+
+    local estimated_freed=$(( journal_size * 30 / 100 ))
+    record_estimate "Journal vacuum (7d)" "$estimated_freed"
+}
+
+analyze_apt() {
+    report_section "APT CACHE"
+
+    if ! command -v apt-get &>/dev/null; then
+        report_line "  apt-get not found"
+        return
+    fi
+
+    local cache_size
+    cache_size=$(get_size /var/cache/apt/archives)
+    report_kv "APT cache size" "$(bytes_to_human "$cache_size")"
+
+    local lists_size
+    lists_size=$(get_size /var/lib/apt/lists)
+    report_kv "APT lists size" "$(bytes_to_human "$lists_size")"
+
+    local pkg_count
+    pkg_count=$(find /var/cache/apt/archives -maxdepth 1 -name "*.deb" 2>/dev/null | wc -l)
+    report_kv "Cached .deb packages" "$pkg_count"
+
+    report_line ""
+    report_line "  Autoremovable packages:"
+    local autoremove_list
+    autoremove_list=$(apt-get --dry-run autoremove 2>/dev/null | grep "^Remv" | awk '{print $2}' || true)
+    if [[ -n "$autoremove_list" ]]; then
+        echo "$autoremove_list" | while IFS= read -r pkg; do
+            report_line "    $pkg"
+        done
+        local autoremove_count
+        autoremove_count=$(echo "$autoremove_list" | wc -l)
+        report_kv "Total autoremovable" "$autoremove_count packages"
+    else
+        report_line "    (none)"
+    fi
+
+    record_estimate "APT cache" "$cache_size"
+}
+
+analyze_kernels() {
+    report_section "KERNEL PACKAGES"
+
+    local current_kernel
+    current_kernel=$(uname -r)
+    report_kv "Running kernel" "$current_kernel"
+
+    local kernel_packages
+    kernel_packages=$(dpkg-query -W -f='${Package} ${Installed-Size}\n' \
+        'linux-image-[0-9]*' 'linux-modules-[0-9]*' 'linux-headers-[0-9]*' 2>/dev/null \
+        | grep -E 'linux-(image|modules|headers)-[0-9]' | sort || true)
+
+    report_line ""
+    report_line "  Installed kernel packages:"
+
+    local removable_size=0
+    while IFS=' ' read -r pkg size_kb; do
+        [[ -z "$pkg" ]] && continue
+        local marker=""
+        if echo "$pkg" | grep -q "$current_kernel"; then
+            marker=" [CURRENT]"
+        else
+            marker=" [removable]"
+            removable_size=$((removable_size + size_kb * 1024))
+        fi
+        report_line "    $pkg ($(bytes_to_human $((size_kb * 1024))))$marker"
+    done <<< "$kernel_packages"
+
+    report_line ""
+    report_kv "Estimated removable" "$(bytes_to_human "$removable_size") (all non-current)"
+
+    record_estimate "Old kernels" "$removable_size"
+}
+
+analyze_snap() {
+    report_section "SNAP"
+
+    if ! command -v snap &>/dev/null; then
+        report_line "  snap not found"
+        return
+    fi
+
+    report_line ""
+    report_line "  Installed snaps:"
+    snap list 2>/dev/null | while IFS= read -r line; do report_line "    $line"; done
+
+    report_line ""
+    report_line "  Disabled (removable) revisions:"
+    local disabled
+    disabled=$(snap list --all 2>/dev/null | grep disabled || true)
+
+    local removable_size=0
+    if [[ -n "$disabled" ]]; then
+        echo "$disabled" | while IFS= read -r line; do report_line "    $line"; done
+
+        while IFS=' ' read -r snap_name _ revision _; do
+            local snap_path="/snap/$snap_name/$revision"
+            if [[ -d "$snap_path" ]]; then
+                local sz
+                sz=$(get_size "$snap_path")
+                removable_size=$((removable_size + sz))
+            fi
+        done < <(snap list --all 2>/dev/null | grep disabled | awk '{print $1, $2, $3}')
+    else
+        report_line "    (none)"
+    fi
+
+    local snap_cache_size
+    snap_cache_size=$(get_size /var/lib/snapd/cache)
+    report_line ""
+    report_kv "Snap cache size" "$(bytes_to_human "$snap_cache_size")"
+
+    record_estimate "Old snap revisions" "$removable_size"
+    record_estimate "Snap cache" "$snap_cache_size"
+}
+
+analyze_temp() {
+    report_section "TEMPORARY FILES"
+
+    for dir in /tmp /var/tmp; do
+        [[ ! -d "$dir" ]] && continue
+        local total_size old_size old_count
+        total_size=$(get_size "$dir")
+        old_size=$(find "$dir" -mindepth 1 -type f -mtime +7 -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+        old_count=$(find "$dir" -mindepth 1 -type f -mtime +7 2>/dev/null | wc -l)
+        report_kv "$dir total size" "$(bytes_to_human "$total_size")"
+        report_kv "$dir files >7 days old" "$old_count files ($(bytes_to_human "$old_size"))"
+        record_estimate "Temp files ($dir)" "$old_size"
+    done
+}
+
+analyze_crash() {
+    report_section "CRASH REPORTS (/var/crash)"
+
+    if [[ ! -d /var/crash ]]; then
+        report_line "  /var/crash not found"
+        return
+    fi
+
+    local crash_size crash_count
+    crash_size=$(get_size /var/crash)
+    crash_count=$(find /var/crash -type f 2>/dev/null | wc -l)
+
+    report_kv "/var/crash size" "$(bytes_to_human "$crash_size")"
+    report_kv "Crash report files" "$crash_count"
+
+    if (( crash_count > 0 )); then
+        report_line ""
+        report_line "  Crash report files:"
+        find /var/crash -type f -printf '%TY-%Tm-%Td\t%s\t%p\n' 2>/dev/null \
+            | sort -rn \
+            | while IFS=$'\t' read -r date size path; do
+                report_line "    $date  $(bytes_to_human "$size")  $path"
+            done
+    fi
+
+    record_estimate "Crash reports" "$crash_size"
+}
+
+analyze_docker() {
+    report_section "DOCKER"
+
+    if ! command -v docker &>/dev/null; then
+        report_line "  docker not found"
+        return
+    fi
+
+    if ! docker info &>/dev/null 2>&1; then
+        report_line "  Docker daemon not running"
+        return
+    fi
+
+    report_line ""
+    report_line "  Docker disk usage:"
+    docker system df 2>/dev/null | while IFS= read -r line; do report_line "    $line"; done
+
+    local reclaimable_line
+    reclaimable_line=$(docker system df 2>/dev/null | grep -oE '[0-9.]+ [KMGT]?B \(reclaimable\)' | tail -1 || true)
+    if [[ -n "$reclaimable_line" ]]; then
+        report_line ""
+        report_kv "Total reclaimable" "$reclaimable_line"
+    fi
+}
+
+analyze_summary() {
+    report_section "SUMMARY - POTENTIAL SPACE TO RECOVER"
+
+    report_line ""
+    local grand_total=0
+
+    local labels=("Old kernels" "Journal vacuum (7d)" "APT cache" "Compressed .gz logs" \
+                  "Old snap revisions" "Snap cache" "Temp files (/tmp)" "Temp files (/var/tmp)" \
+                  "Crash reports")
+
+    for label in "${labels[@]}"; do
+        local bytes="${_ANALYSIS_ESTIMATES[$label]:-0}"
+        if (( bytes > 0 )); then
+            report_kv "$label" "~$(bytes_to_human "$bytes")"
+            grand_total=$((grand_total + bytes))
+        fi
+    done
+
+    report_line ""
+    report_line "-------------------------------------------------------"
+    report_kv "ESTIMATED TOTAL" "~$(bytes_to_human "$grand_total")"
+    report_line "-------------------------------------------------------"
+    report_line ""
+    report_line "  To reclaim space, run:"
+    report_line "    sudo ./logcleaner.sh --yes --profile moderate"
+    report_line ""
+    report_line "  Estimates are conservative. Actual results may vary."
+}
+
+run_analysis() {
+    # Truncate/create report file if specified
+    if [[ -n "$REPORT_FILE" ]]; then
+        : > "$REPORT_FILE" || {
+            echo "ERROR: Cannot write to $REPORT_FILE" >&2
+            exit 1
+        }
+    fi
+
+    report_line "======================================================="
+    report_line "  UBUNTU SYSTEM ANALYSIS REPORT"
+    report_line "  Generated : $(date '+%Y-%m-%d %H:%M:%S')"
+    report_line "  Hostname  : $(hostname -f 2>/dev/null || hostname)"
+    report_line "  Kernel    : $(uname -r)"
+    report_line "  OS        : $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo 'Unknown')"
+    report_line "======================================================="
+
+    analyze_disk
+    analyze_large_files
+    analyze_logs
+    analyze_journal
+    analyze_apt
+    analyze_kernels
+    analyze_snap
+    analyze_temp
+    analyze_crash
+    analyze_docker
+    analyze_summary
+
+    report_line ""
+    if [[ -n "$REPORT_FILE" ]]; then
+        echo "Report saved to: $REPORT_FILE"
+    fi
+}
+
+################################################################################
 # Main Execution
 ################################################################################
 
@@ -2178,6 +2576,13 @@ main() {
     # Auto-disable interactive mode when stdin is not a terminal (e.g., piped one-liner)
     if [[ "$INTERACTIVE" == true ]] && [[ ! -t 0 ]]; then
         INTERACTIVE=false
+    fi
+
+    # Analysis mode bypasses all cleanup logic
+    if [[ "$ANALYZE_MODE" == true ]]; then
+        check_root
+        run_analysis
+        exit 0
     fi
 
     # Prevent apt/dpkg interactive prompts (e.g., debconf, config file questions)
