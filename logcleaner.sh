@@ -2191,6 +2191,75 @@ cleanup_mail() {
 }
 
 ################################################################################
+# Analysis Mode
+################################################################################
+
+# Write a line to stdout and optionally to REPORT_FILE
+report_line() {
+    local line="$1"
+    echo "$line"
+    if [[ -n "$REPORT_FILE" ]]; then
+        echo "$line" >> "$REPORT_FILE"
+    fi
+}
+
+report_section() {
+    local title="$1"
+    report_line ""
+    report_line "======================================================="
+    report_line "  $title"
+    report_line "======================================================="
+}
+
+report_kv() {
+    local key="$1"
+    local value="$2"
+    report_line "$(printf '  %-35s %s' "$key:" "$value")"
+}
+
+# Record an estimate for the summary (label, bytes)
+record_estimate() {
+    local label="$1"
+    local bytes="$2"
+    _ANALYSIS_ESTIMATES["$label"]="$bytes"
+}
+
+run_analysis() {
+    # Truncate/create report file if specified
+    if [[ -n "$REPORT_FILE" ]]; then
+        : > "$REPORT_FILE" || {
+            echo "ERROR: Cannot write to $REPORT_FILE" >&2
+            exit 1
+        }
+    fi
+
+    report_line "======================================================="
+    report_line "  UBUNTU SYSTEM ANALYSIS REPORT"
+    report_line "  Generated : $(date '+%Y-%m-%d %H:%M:%S')"
+    report_line "  Hostname  : $(hostname -f 2>/dev/null || hostname)"
+    report_line "  Kernel    : $(uname -r)"
+    report_line "  OS        : $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"' || echo 'Unknown')"
+    report_line "======================================================="
+
+    analyze_disk
+    analyze_large_files
+    analyze_logs
+    analyze_journal
+    analyze_apt
+    analyze_kernels
+    analyze_snap
+    analyze_temp
+    analyze_crash
+    analyze_docker
+    analyze_summary
+
+    report_line ""
+    if [[ -n "$REPORT_FILE" ]]; then
+        echo "Report saved to: $REPORT_FILE"
+    fi
+}
+
+################################################################################
 # Main Execution
 ################################################################################
 
