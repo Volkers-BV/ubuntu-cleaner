@@ -2224,6 +2224,24 @@ record_estimate() {
     _ANALYSIS_ESTIMATES["$label"]="$bytes"
 }
 
+analyze_disk() {
+    report_section "DISK USAGE"
+
+    report_line ""
+    report_line "  Filesystem overview:"
+    df -h --output=source,size,used,avail,pcent,target 2>/dev/null \
+        | grep -v tmpfs \
+        | grep -v udev \
+        | while IFS= read -r line; do report_line "    $line"; done
+
+    report_line ""
+    report_line "  Top 20 directories by size (/):"
+    du -xh --max-depth=3 / 2>/dev/null \
+        | sort -rh \
+        | head -20 \
+        | while IFS= read -r line; do report_line "    $line"; done
+}
+
 run_analysis() {
     # Truncate/create report file if specified
     if [[ -n "$REPORT_FILE" ]]; then
