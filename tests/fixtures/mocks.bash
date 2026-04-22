@@ -49,8 +49,11 @@ exit 0
 EOF
 
     # du: return fake size for any path
-    printf '#!/bin/bash\necho "104857600\t${@: -1}"\nexit 0\n' \
-        > "$MOCK_BIN/du"
+    cat > "$MOCK_BIN/du" << 'EOF'
+#!/bin/bash
+echo "104857600	${@: -1}"
+exit 0
+EOF
 
     # hostname
     printf '#!/bin/bash\necho "test-host"\nexit 0\n' \

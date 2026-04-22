@@ -53,7 +53,7 @@ shell-2404:
 build:
 	@for v in $(VERSIONS); do \
 		echo "Building Ubuntu $$v..."; \
-		docker build -q \
+		docker build \
 			--build-arg UBUNTU_VERSION=$$v \
 			-t logcleaner-test:$$v \
 			-f docker/Dockerfile.base . ; \

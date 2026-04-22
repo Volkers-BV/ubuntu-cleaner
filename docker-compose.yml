@@ -1,4 +1,5 @@
 services:
+  # Full test suite (unit + integration). privileged required for integration tests.
   test-1804:
     build:
       context: .
