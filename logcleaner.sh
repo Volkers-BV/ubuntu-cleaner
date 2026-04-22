@@ -2190,14 +2190,14 @@ analyze_disk() {
     df -h --output=source,size,used,avail,pcent,target 2>/dev/null \
         | grep -v tmpfs \
         | grep -v udev \
-        | while IFS= read -r line; do report_line "    $line"; done
+        | while IFS= read -r line; do report_line "    $line"; done || true
 
     report_line ""
     report_line "  Top 20 directories by size (/):"
     du -xh --max-depth=3 / 2>/dev/null \
         | sort -rh \
         | head -20 \
-        | while IFS= read -r line; do report_line "    $line"; done
+        | while IFS= read -r line; do report_line "    $line"; done || true
 }
 
 analyze_large_files() {
@@ -2539,6 +2539,7 @@ main() {
     # Analysis mode bypasses all cleanup logic
     if [[ "$ANALYZE_MODE" == true ]]; then
         check_root
+        set +e  # analysis is read-only; don't abort on non-zero (e.g. du permission errors)
         run_analysis
         exit 0
     fi
