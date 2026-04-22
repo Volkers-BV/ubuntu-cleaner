@@ -2262,6 +2262,177 @@ analyze_large_files() {
     fi
 }
 
+analyze_logs() {
+    report_section "LOG FILES (/var/log)"
+
+    if [[ ! -d /var/log ]]; then
+        report_line "  /var/log not found"
+        return
+    fi
+
+    local total_size
+    total_size=$(du -sb /var/log 2>/dev/null | awk '{print $1}')
+    report_kv "Total /var/log size" "$(bytes_to_human "${total_size:-0}")"
+
+    local gz_count gz_size
+    gz_count=$(find /var/log -name "*.gz" -type f 2>/dev/null | wc -l)
+    gz_size=$(find /var/log -name "*.gz" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    report_kv "Compressed (.gz) files" "$gz_count files ($(bytes_to_human "$gz_size"))"
+
+    report_line ""
+    report_line "  Top 20 log files by size:"
+    find /var/log -type f -printf '%s\t%p\n' 2>/dev/null \
+        | sort -rn \
+        | head -20 \
+        | awk '{printf "    %s\t%s\n", ($1 >= 1073741824 ? sprintf("%.1fGB", $1/1073741824) : $1 >= 1048576 ? sprintf("%.0fMB", $1/1048576) : sprintf("%.0fKB", $1/1024)), $2}' \
+        | while IFS= read -r line; do report_line "$line"; done
+
+    record_estimate "Compressed .gz logs" "$gz_size"
+}
+
+analyze_journal() {
+    report_section "SYSTEMD JOURNAL"
+
+    if ! command -v journalctl &>/dev/null; then
+        report_line "  journalctl not found"
+        return
+    fi
+
+    local journal_size
+    journal_size=$(get_size /var/log/journal)
+    report_kv "Journal size" "$(bytes_to_human "$journal_size")"
+
+    local conf_file="/etc/systemd/journald.conf"
+    if [[ -f "$conf_file" ]]; then
+        report_line ""
+        report_line "  journald.conf active settings:"
+        grep -v '^\s*#' "$conf_file" | grep -v '^\s*$' | while IFS= read -r line; do
+            report_line "    $line"
+        done
+    fi
+
+    report_line ""
+    report_line "  Vacuum estimate (keep 7 days):"
+    journalctl --vacuum-time=7d --dry-run 2>&1 | while IFS= read -r line; do report_line "    $line"; done
+
+    local estimated_freed=$(( journal_size * 30 / 100 ))
+    record_estimate "Journal vacuum (7d)" "$estimated_freed"
+}
+
+analyze_apt() {
+    report_section "APT CACHE"
+
+    if ! command -v apt-get &>/dev/null; then
+        report_line "  apt-get not found"
+        return
+    fi
+
+    local cache_size
+    cache_size=$(get_size /var/cache/apt/archives)
+    report_kv "APT cache size" "$(bytes_to_human "$cache_size")"
+
+    local lists_size
+    lists_size=$(get_size /var/lib/apt/lists)
+    report_kv "APT lists size" "$(bytes_to_human "$lists_size")"
+
+    local pkg_count
+    pkg_count=$(find /var/cache/apt/archives -maxdepth 1 -name "*.deb" 2>/dev/null | wc -l)
+    report_kv "Cached .deb packages" "$pkg_count"
+
+    report_line ""
+    report_line "  Autoremovable packages:"
+    local autoremove_list
+    autoremove_list=$(apt-get --dry-run autoremove 2>/dev/null | grep "^Remv" | awk '{print $2}' || true)
+    if [[ -n "$autoremove_list" ]]; then
+        echo "$autoremove_list" | while IFS= read -r pkg; do
+            report_line "    $pkg"
+        done
+        local autoremove_count
+        autoremove_count=$(echo "$autoremove_list" | wc -l)
+        report_kv "Total autoremovable" "$autoremove_count packages"
+    else
+        report_line "    (none)"
+    fi
+
+    record_estimate "APT cache" "$cache_size"
+}
+
+analyze_kernels() {
+    report_section "KERNEL PACKAGES"
+
+    local current_kernel
+    current_kernel=$(uname -r)
+    report_kv "Running kernel" "$current_kernel"
+
+    local kernel_packages
+    kernel_packages=$(dpkg-query -W -f='${Package} ${Installed-Size}\n' \
+        'linux-image-[0-9]*' 'linux-modules-[0-9]*' 'linux-headers-[0-9]*' 2>/dev/null \
+        | grep -E 'linux-(image|modules|headers)-[0-9]' | sort || true)
+
+    report_line ""
+    report_line "  Installed kernel packages:"
+
+    local removable_size=0
+    while IFS=' ' read -r pkg size_kb; do
+        [[ -z "$pkg" ]] && continue
+        local marker=""
+        if echo "$pkg" | grep -q "$current_kernel"; then
+            marker=" [CURRENT]"
+        else
+            marker=" [removable]"
+            removable_size=$((removable_size + size_kb * 1024))
+        fi
+        report_line "    $pkg ($(bytes_to_human $((size_kb * 1024))))$marker"
+    done <<< "$kernel_packages"
+
+    report_line ""
+    report_kv "Estimated removable" "$(bytes_to_human "$removable_size") (keeping current + 1)"
+
+    record_estimate "Old kernels" "$removable_size"
+}
+
+analyze_snap() {
+    report_section "SNAP"
+
+    if ! command -v snap &>/dev/null; then
+        report_line "  snap not found"
+        return
+    fi
+
+    report_line ""
+    report_line "  Installed snaps:"
+    snap list 2>/dev/null | while IFS= read -r line; do report_line "    $line"; done
+
+    report_line ""
+    report_line "  Disabled (removable) revisions:"
+    local disabled
+    disabled=$(snap list --all 2>/dev/null | grep disabled || true)
+
+    local removable_size=0
+    if [[ -n "$disabled" ]]; then
+        echo "$disabled" | while IFS= read -r line; do report_line "    $line"; done
+
+        while IFS=' ' read -r snap_name _ revision _; do
+            local snap_path="/snap/$snap_name/$revision"
+            if [[ -d "$snap_path" ]]; then
+                local sz
+                sz=$(get_size "$snap_path")
+                removable_size=$((removable_size + sz))
+            fi
+        done < <(snap list --all 2>/dev/null | grep disabled | awk '{print $1, $2, $3}')
+    else
+        report_line "    (none)"
+    fi
+
+    local snap_cache_size
+    snap_cache_size=$(get_size /var/lib/snapd/cache)
+    report_line ""
+    report_kv "Snap cache size" "$(bytes_to_human "$snap_cache_size")"
+
+    record_estimate "Old snap revisions" "$removable_size"
+    record_estimate "Snap cache" "$snap_cache_size"
+}
+
 run_analysis() {
     # Truncate/create report file if specified
     if [[ -n "$REPORT_FILE" ]]; then
