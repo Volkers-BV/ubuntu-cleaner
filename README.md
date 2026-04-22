@@ -47,7 +47,6 @@
 - **Lock File Protection** - Prevents multiple simultaneous instances
 - **Configuration File Support** - Customize behavior via `/etc/logcleaner.conf`
 - **Selective Cleanup** - Run specific operations only or skip certain tasks
-- **Backup Support** - Optional backup creation before deletion
 - **Deleted Files Manifest** - Track exactly what was removed
 
 ## Requirements
@@ -217,11 +216,6 @@ sudo ./logcleaner.sh --only-temp --only-journal
 sudo ./logcleaner.sh --temp-age 14 --journal-days 3 --kernel-keep 2
 ```
 
-**Create backup before cleanup:**
-```bash
-sudo ./logcleaner.sh --create-backup --backup-dir /backup/logcleaner
-```
-
 ### Command-Line Options
 
 **Analysis Options:**
@@ -240,10 +234,6 @@ sudo ./logcleaner.sh --create-backup --backup-dir /backup/logcleaner
 - `--log-file FILE` - Write logs to specified file (default: `/var/log/logcleaner.log`)
 - `--no-log` - Disable file logging
 - `--manifest FILE` - Write list of deleted files to FILE
-
-**Backup Options:**
-- `--create-backup` - Create backup archive before deletion
-- `--backup-dir DIR` - Backup directory (default: `/var/backups/logcleaner`)
 
 **Cleanup Control:**
 - `--skip-kernels` - Skip old kernel cleanup
@@ -372,7 +362,6 @@ Settings are applied in this order (later overrides earlier):
 - **Comprehensive Logging**: Audit trail showing exactly what was cleaned and when
 - **Deleted Files Manifest**: Optional tracking of all deleted files
 - **Non-Destructive**: Only removes old/temporary files, never touches active system files
-- **Backup Support**: Optional backup creation before any deletion operations
 
 ## Scheduling (Optional)
 
@@ -510,7 +499,6 @@ While this script includes comprehensive safety checks, always ensure you have:
 - Recent backups of important data
 - Tested the script in a non-production environment first (use `--dry-run`)
 - Reviewed the configuration and understand what each cleanup operation does
-- Considered using `--create-backup` for additional safety in production
 
 **Production Recommendations:**
 1. Always test with `--dry-run` first
