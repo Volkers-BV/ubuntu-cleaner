@@ -1,0 +1,32 @@
+ARG UBUNTU_VERSION=22.04
+FROM ubuntu:${UBUNTU_VERSION}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    sudo \
+    findutils \
+    gawk \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install BATS 1.x from source (Ubuntu apt has old 0.4.x on 18.04/20.04)
+RUN git clone --depth 1 --branch v1.11.0 \
+    https://github.com/bats-core/bats-core.git /tmp/bats-core \
+    && /tmp/bats-core/install.sh /usr/local \
+    && rm -rf /tmp/bats-core
+
+# Install bats-support and bats-assert helpers
+RUN git clone --depth 1 \
+    https://github.com/bats-core/bats-support.git /usr/lib/bats-support \
+    && git clone --depth 1 \
+    https://github.com/bats-core/bats-assert.git /usr/lib/bats-assert
+
+WORKDIR /opt/logcleaner
+COPY logcleaner.sh .
+COPY tests/ tests/
+RUN chmod +x logcleaner.sh \
+    && if [ -f tests/fixtures/setup_fixtures.sh ]; then chmod +x tests/fixtures/setup_fixtures.sh; fi
+
+CMD ["bats", "--recursive", "tests/"]
