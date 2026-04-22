@@ -33,6 +33,12 @@
 - **Python cache cleanup** - Clean `__pycache__` directories
 - **Service handling** - Optional stop/start for monitoring services
 
+### Analysis Mode
+
+- **Read-Only System Audit** - `--analyze` scans the system and reports what can be cleaned without making any changes
+- **AI-Ready Output** - Structured plain-text report designed to be pasted into AI tools for analysis
+- **Report File Export** - `--report-file FILE` saves the report for later review or sharing
+
 ### Safety & Control Features
 
 - **Dry-Run Mode** - Preview changes without making any modifications
@@ -65,7 +71,9 @@ This command will:
 
 ## System Analysis (Read-Only)
 
-Run a read-only system audit to identify what can be cleaned — no changes made. Ideal for AI-assisted analysis or pre-cleanup review.
+Run a read-only system audit to identify what can be cleaned — no changes made, nothing deleted. The report is structured plain text, easy to copy-paste for manual review or AI-assisted analysis.
+
+### One-Liner (No Installation Required)
 
 ```bash
 # Print report to terminal
@@ -75,18 +83,89 @@ curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcle
 curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --analyze --report-file /tmp/system-analysis.txt
 ```
 
-The report covers:
-- Disk usage overview and top directories
-- Large files (>100MB)
-- Log files and compressed logs
-- Systemd journal size and settings
-- APT cache and autoremovable packages
-- Installed kernels (current vs removable)
-- Snap revisions and cache
-- Temporary files by age
-- Crash reports
-- Docker disk usage (if installed)
-- Summary with total estimated reclaimable space
+### What the Report Covers
+
+| Section | What it shows |
+|---------|--------------|
+| Disk usage | `df` overview + top 20 directories by size |
+| Large files | All files >100MB across the filesystem |
+| Log files | Total `/var/log` size, top 20 files, compressed log count |
+| Journal | Current journal size, `journald.conf` settings, disk usage |
+| APT cache | Cache size, package list size, autoremovable packages |
+| Kernels | Installed kernel packages vs running kernel, estimated removable size |
+| Snap | Installed snaps, disabled revisions, snap cache size |
+| Temp files | `/tmp` and `/var/tmp` totals + files older than 7 days |
+| Crash reports | `/var/crash` size and file listing |
+| Docker | `docker system df` output with reclaimable space (if installed) |
+| **Summary** | **Aggregate estimate of total reclaimable space** |
+
+### Sample Output
+
+```
+=======================================================
+  UBUNTU SYSTEM ANALYSIS REPORT
+  Generated : 2026-04-22 10:30:00
+  Hostname  : myserver.example.com
+  Kernel    : 5.15.0-91-generic
+  OS        : Ubuntu 22.04.3 LTS
+=======================================================
+
+=======================================================
+  DISK USAGE
+=======================================================
+
+  Filesystem overview:
+    Filesystem      Size  Used Avail Use%  Mounted on
+    /dev/sda1        50G   38G  9.5G  80%  /
+
+  Top 20 directories by size (/):
+    ...
+
+=======================================================
+  KERNEL PACKAGES
+=======================================================
+
+  Running kernel: 5.15.0-91-generic
+  Installed kernel packages:
+    linux-image-5.15.0-88-generic (245MB) [removable]
+    linux-image-5.15.0-91-generic (245MB) [CURRENT]
+  Estimated removable:                    ~245MB (all non-current)
+
+=======================================================
+  SUMMARY - POTENTIAL SPACE TO RECOVER
+=======================================================
+
+  Old kernels:                            ~245MB
+  Journal vacuum (7d):                    ~150MB
+  APT cache:                              ~800MB
+  Compressed .gz logs:                    ~45MB
+  Temp files (/tmp):                      ~120MB
+  Crash reports:                          ~300MB
+
+-------------------------------------------------------
+  ESTIMATED TOTAL:                        ~1.66GB
+-------------------------------------------------------
+
+  To reclaim space, run:
+    sudo ./logcleaner.sh --yes --profile moderate
+```
+
+### AI-Assisted Workflow
+
+1. Save the report to a file:
+   ```bash
+   curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --analyze --report-file /tmp/analysis.txt
+   ```
+2. Copy the contents of `/tmp/analysis.txt`
+3. Paste into Claude, ChatGPT, or your preferred AI with a prompt like:
+   > "Review this Ubuntu system analysis report and tell me what to clean up first, what looks unusual, and which logcleaner.sh flags to use."
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--analyze` | Run read-only analysis (no changes made) |
+| `--report-file FILE` | Write report to FILE in addition to stdout |
 
 ## Installation
 
@@ -144,6 +223,10 @@ sudo ./logcleaner.sh --create-backup --backup-dir /backup/logcleaner
 ```
 
 ### Command-Line Options
+
+**Analysis Options:**
+- `--analyze` - Run read-only system analysis (no changes made)
+- `--report-file FILE` - Write analysis report to FILE (in addition to stdout)
 
 **General Options:**
 - `-h, --help` - Show help message with all options
