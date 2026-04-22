@@ -2433,6 +2433,96 @@ analyze_snap() {
     record_estimate "Snap cache" "$snap_cache_size"
 }
 
+analyze_temp() {
+    report_section "TEMPORARY FILES"
+
+    for dir in /tmp /var/tmp; do
+        [[ ! -d "$dir" ]] && continue
+        local total_size old_size old_count
+        total_size=$(get_size "$dir")
+        old_size=$(find "$dir" -mindepth 1 -type f -mtime +7 -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+        old_count=$(find "$dir" -mindepth 1 -type f -mtime +7 2>/dev/null | wc -l)
+        report_kv "$dir total size" "$(bytes_to_human "$total_size")"
+        report_kv "$dir files >7 days old" "$old_count files ($(bytes_to_human "$old_size"))"
+        record_estimate "Temp files ($dir)" "$old_size"
+    done
+}
+
+analyze_crash() {
+    report_section "CRASH REPORTS (/var/crash)"
+
+    if [[ ! -d /var/crash ]]; then
+        report_line "  /var/crash not found"
+        return
+    fi
+
+    local crash_size crash_count
+    crash_size=$(get_size /var/crash)
+    crash_count=$(find /var/crash -type f 2>/dev/null | wc -l)
+
+    report_kv "/var/crash size" "$(bytes_to_human "$crash_size")"
+    report_kv "Crash report files" "$crash_count"
+
+    if (( crash_count > 0 )); then
+        report_line ""
+        report_line "  Crash report files:"
+        find /var/crash -type f -printf '%TY-%Tm-%Td\t%s\t%p\n' 2>/dev/null \
+            | sort -rn \
+            | while IFS=$'\t' read -r date size path; do
+                report_line "    $date  $(bytes_to_human "$size")  $path"
+            done
+    fi
+
+    record_estimate "Crash reports" "$crash_size"
+}
+
+analyze_docker() {
+    report_section "DOCKER"
+
+    if ! command -v docker &>/dev/null; then
+        report_line "  docker not found"
+        return
+    fi
+
+    if ! docker info &>/dev/null 2>&1; then
+        report_line "  Docker daemon not running"
+        return
+    fi
+
+    report_line ""
+    report_line "  Docker disk usage:"
+    docker system df 2>/dev/null | while IFS= read -r line; do report_line "    $line"; done
+}
+
+analyze_summary() {
+    report_section "SUMMARY - POTENTIAL SPACE TO RECOVER"
+
+    report_line ""
+    local grand_total=0
+
+    local labels=("Old kernels" "Journal vacuum (7d)" "APT cache" "Compressed .gz logs" \
+                  "Old snap revisions" "Snap cache" "Temp files (/tmp)" "Temp files (/var/tmp)" \
+                  "Crash reports")
+
+    for label in "${labels[@]}"; do
+        local bytes="${_ANALYSIS_ESTIMATES[$label]:-0}"
+        if (( bytes > 0 )); then
+            report_kv "$label" "~$(bytes_to_human "$bytes")"
+            grand_total=$((grand_total + bytes))
+        fi
+    done
+
+    report_line ""
+    report_line "-------------------------------------------------------"
+    report_kv "ESTIMATED TOTAL" "~$(bytes_to_human "$grand_total")"
+    report_line "-------------------------------------------------------"
+    report_line ""
+    report_line "  To reclaim space, run:"
+    report_line "    sudo ./logcleaner.sh --yes --profile moderate"
+    report_line ""
+    report_line "  Estimates are conservative. Actual results may vary."
+}
+
 run_analysis() {
     # Truncate/create report file if specified
     if [[ -n "$REPORT_FILE" ]]; then
