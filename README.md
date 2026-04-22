@@ -63,6 +63,31 @@ This command will:
 2. Execute it with sudo (non-interactive via `--yes`)
 3. Clean up the script afterwards (even if the script exits non-zero)
 
+## System Analysis (Read-Only)
+
+Run a read-only system audit to identify what can be cleaned — no changes made. Ideal for AI-assisted analysis or pre-cleanup review.
+
+```bash
+# Print report to terminal
+curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --analyze
+
+# Save report to file
+curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --analyze --report-file /tmp/system-analysis.txt
+```
+
+The report covers:
+- Disk usage overview and top directories
+- Large files (>100MB)
+- Log files and compressed logs
+- Systemd journal size and settings
+- APT cache and autoremovable packages
+- Installed kernels (current vs removable)
+- Snap revisions and cache
+- Temporary files by age
+- Crash reports
+- Docker disk usage (if installed)
+- Summary with total estimated reclaimable space
+
 ## Installation
 
 1. Clone or download the script:
