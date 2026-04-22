@@ -2242,6 +2242,26 @@ analyze_disk() {
         | while IFS= read -r line; do report_line "    $line"; done
 }
 
+analyze_large_files() {
+    report_section "LARGE FILES (>100MB)"
+
+    report_line ""
+    report_line "  Files larger than 100MB across filesystem:"
+
+    local count=0
+    while IFS= read -r line; do
+        report_line "    $line"
+        count=$((count + 1))
+    done < <(find / -xdev -type f -size +100M -printf '%s\t%p\n' 2>/dev/null \
+        | sort -rn \
+        | head -30 \
+        | awk '{printf "%s\t%s\n", ($1 >= 1073741824 ? sprintf("%.1fGB", $1/1073741824) : sprintf("%.0fMB", $1/1048576)), $2}')
+
+    if (( count == 0 )); then
+        report_line "    (none found)"
+    fi
+}
+
 run_analysis() {
     # Truncate/create report file if specified
     if [[ -n "$REPORT_FILE" ]]; then
