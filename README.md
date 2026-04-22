@@ -1,6 +1,6 @@
 # Ubuntu Log Cleaner
 
-**Version 3.0.1** - A comprehensive system maintenance script for Ubuntu servers that performs automated cleanup tasks to free disk space and maintain system health.
+**Version 3.1.0** - A comprehensive system maintenance script for Ubuntu servers that performs automated cleanup tasks to free disk space and maintain system health.
 
 ## Features
 
