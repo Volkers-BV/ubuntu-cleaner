@@ -1,0 +1,38 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Ubuntu ${{ matrix.ubuntu }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ubuntu: ["18.04", "20.04", "22.04", "24.04"]
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test image
+        run: |
+          docker build \
+            --build-arg UBUNTU_VERSION=${{ matrix.ubuntu }} \
+            -t logcleaner-test:${{ matrix.ubuntu }} \
+            -f docker/Dockerfile.base .
+
+      - name: Run unit tests
+        run: |
+          docker run --rm \
+            logcleaner-test:${{ matrix.ubuntu }} \
+            bats --recursive tests/unit/
+
+      - name: Run integration tests
+        run: |
+          docker run --rm --privileged \
+            logcleaner-test:${{ matrix.ubuntu }} \
+            bats --recursive tests/integration/
