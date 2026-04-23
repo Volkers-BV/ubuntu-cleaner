@@ -25,7 +25,7 @@ set -euo pipefail  # Exit on error, undefined variables, and pipe failures
 # Script Metadata
 ################################################################################
 
-readonly VERSION="3.1.1"
+readonly VERSION="3.1.2"
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="/etc/logcleaner.conf"
@@ -2190,6 +2190,7 @@ analyze_disk() {
     df -h --output=source,size,used,avail,pcent,target 2>/dev/null \
         | grep -v tmpfs \
         | grep -v udev \
+        | grep -v '^overlay ' \
         | while IFS= read -r line; do report_line "    $line"; done || true
 
     report_line ""
@@ -2240,6 +2241,7 @@ analyze_logs() {
     report_line ""
     report_line "  Top 20 log files by size:"
     find /var/log -type f -printf '%s\t%p\n' 2>/dev/null \
+        | grep -v '/var/log/journal/' \
         | sort -rn \
         | head -20 \
         | awk '{printf "    %s\t%s\n", ($1 >= 1073741824 ? sprintf("%.1fGB", $1/1073741824) : $1 >= 1048576 ? sprintf("%.0fMB", $1/1048576) : sprintf("%.0fKB", $1/1024)), $2}' \
@@ -2256,9 +2258,19 @@ analyze_journal() {
         return
     fi
 
+    # Use machine-id to target only the system journal (excludes tenant journals like Netdata)
+    local machine_id
+    machine_id=$(cat /etc/machine-id 2>/dev/null | head -1 || true)
+    local system_journal_dir="/var/log/journal/$machine_id"
+
     local journal_size
-    journal_size=$(get_size /var/log/journal)
-    report_kv "Journal size" "$(bytes_to_human "$journal_size")"
+    if [[ -n "$machine_id" ]] && [[ -d "$system_journal_dir" ]]; then
+        journal_size=$(get_size "$system_journal_dir")
+    else
+        journal_size=$(get_size /var/log/journal)
+    fi
+    report_kv "System journal size" "$(bytes_to_human "$journal_size")"
+    journalctl --disk-usage 2>/dev/null | while IFS= read -r line; do report_line "  ($line)"; done
 
     local conf_file="/etc/systemd/journald.conf"
     if [[ -f "$conf_file" ]]; then
@@ -2268,10 +2280,6 @@ analyze_journal() {
             report_line "    $line"
         done
     fi
-
-    report_line ""
-    report_line "  Current disk usage:"
-    journalctl --disk-usage 2>/dev/null | while IFS= read -r line; do report_line "    $line"; done
 
     local estimated_freed=$(( journal_size * 30 / 100 ))
     record_estimate "Journal vacuum (7d)" "$estimated_freed"
@@ -2313,6 +2321,7 @@ analyze_apt() {
     fi
 
     record_estimate "APT cache" "$cache_size"
+    record_estimate "APT lists" "$lists_size"
 }
 
 analyze_kernels() {
@@ -2434,6 +2443,65 @@ analyze_crash() {
     record_estimate "Crash reports" "$crash_size"
 }
 
+analyze_netdata() {
+    report_section "NETDATA"
+
+    local netdata_base=""
+    if [[ -d "/opt/netdata" ]]; then
+        netdata_base="/opt/netdata"
+    elif [[ -d "/var/lib/netdata" ]]; then
+        netdata_base="/var/lib/netdata"
+    else
+        report_line "  Netdata not found"
+        return
+    fi
+
+    local total_size
+    total_size=$(get_size "$netdata_base")
+    report_kv "Total Netdata install" "$(bytes_to_human "$total_size")"
+
+    local cache_dir db_dir
+    if [[ "$netdata_base" == "/opt/netdata" ]]; then
+        cache_dir="$netdata_base/var/cache/netdata"
+        db_dir="$netdata_base/var/lib/netdata/dbengine"
+    else
+        cache_dir="/var/cache/netdata"
+        db_dir="$netdata_base/dbengine"
+    fi
+
+    if [[ -d "$cache_dir" ]]; then
+        local cache_size
+        cache_size=$(get_size "$cache_dir")
+        report_kv "Cache directory" "$(bytes_to_human "$cache_size")"
+        (( cache_size > 0 )) && record_estimate "Netdata cache" "$cache_size"
+    fi
+
+    if [[ -d "$db_dir" ]]; then
+        local db_size
+        db_size=$(get_size "$db_dir")
+        report_kv "DB engine total" "$(bytes_to_human "$db_size")"
+        local old_count old_size
+        old_count=$(find "$db_dir" -type f -mtime +"$NETDATA_DB_AGE" 2>/dev/null | wc -l)
+        old_size=$(find "$db_dir" -type f -mtime +"$NETDATA_DB_AGE" -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+        if (( old_count > 0 )); then
+            report_kv "DB files >${NETDATA_DB_AGE}d old" "$old_count files ($(bytes_to_human "$old_size"))"
+            record_estimate "Netdata old DB" "$old_size"
+        fi
+    fi
+
+    # Netdata tenant journal in /var/log/journal (*.netdata dirs)
+    local netdata_journal_size=0
+    for dir in /var/log/journal/*.netdata; do
+        [[ -d "$dir" ]] || continue
+        local s
+        s=$(get_size "$dir")
+        netdata_journal_size=$((netdata_journal_size + s))
+    done
+    if (( netdata_journal_size > 0 )); then
+        report_kv "Netdata journal logs" "$(bytes_to_human "$netdata_journal_size")"
+    fi
+}
+
 analyze_docker() {
     report_section "DOCKER"
 
@@ -2465,9 +2533,10 @@ analyze_summary() {
     report_line ""
     local grand_total=0
 
-    local labels=("Old kernels" "Journal vacuum (7d)" "APT cache" "Compressed .gz logs" \
-                  "Old snap revisions" "Snap cache" "Temp files (/tmp)" "Temp files (/var/tmp)" \
-                  "Crash reports")
+    local labels=("Old kernels" "Journal vacuum (7d)" "APT cache" "APT lists" \
+                  "Compressed .gz logs" "Old snap revisions" "Snap cache" \
+                  "Netdata cache" "Netdata old DB" \
+                  "Temp files (/tmp)" "Temp files (/var/tmp)" "Crash reports")
 
     for label in "${labels[@]}"; do
         local bytes="${_ANALYSIS_ESTIMATES[$label]:-0}"
@@ -2483,7 +2552,8 @@ analyze_summary() {
     report_line "-------------------------------------------------------"
     report_line ""
     report_line "  To reclaim space, run:"
-    report_line "    sudo ./logcleaner.sh --yes --profile moderate"
+    report_line "    curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh \\"
+    report_line "      | sudo bash -s -- --yes --profile moderate"
     report_line ""
     report_line "  Estimates are conservative. Actual results may vary."
 }
@@ -2514,6 +2584,7 @@ run_analysis() {
     analyze_snap
     analyze_temp
     analyze_crash
+    analyze_netdata
     analyze_docker
     analyze_summary
 
