@@ -55,18 +55,55 @@
 - **Privileges**: Must be run as root or with sudo
 - **Dependencies**: Standard Ubuntu utilities (apt-get, journalctl, snap)
 
-## Quick Start (One-Liner)
+## One-Liners
 
-Run the script directly from GitHub without cloning:
+All commands run directly from GitHub — no installation, no cloning.
+
+### Analyze (read-only)
+
+Audit your system without making any changes:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh -o /tmp/logcleaner.sh && sudo bash /tmp/logcleaner.sh --yes; rm -f /tmp/logcleaner.sh
+curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --analyze
 ```
 
-This command will:
-1. Download the script to `/tmp/logcleaner.sh`
-2. Execute it with sudo (non-interactive via `--yes`)
-3. Clean up the script afterwards (even if the script exits non-zero)
+Save the report to a file:
+
+```bash
+curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --analyze --report-file /tmp/system-analysis.txt
+```
+
+### Clean (safe profile)
+
+Conservative cleanup — logs, APT cache, old kernels, journal vacuum. Safe for production:
+
+```bash
+curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --yes --profile safe
+```
+
+### Clean (moderate profile)
+
+Recommended for most servers — adds snap cache, APT lists, crash reports, temp files:
+
+```bash
+curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --yes --profile moderate
+```
+
+### Clean (aggressive profile)
+
+Maximum cleanup — adds Netdata, Prometheus, Grafana data, Python cache, thumbnails. Review the [profile table](#safety-profiles) before running:
+
+```bash
+curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --yes --profile aggressive
+```
+
+### Dry-run before cleaning
+
+Preview what would be removed without touching anything:
+
+```bash
+curl -sL https://raw.githubusercontent.com/Volkers-BV/ubuntu-cleaner/main/logcleaner.sh | sudo bash -s -- --dry-run --profile moderate
+```
 
 ## System Analysis (Read-Only)
 
