@@ -25,7 +25,7 @@ set -euo pipefail  # Exit on error, undefined variables, and pipe failures
 # Script Metadata
 ################################################################################
 
-readonly VERSION="3.1.3"
+readonly VERSION="3.2.0"
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
 CONFIG_FILE="/etc/logcleaner.conf"
@@ -61,6 +61,10 @@ CLEANUP_MAIL=false           # Opt-in
 
 # Safety profile (safe, moderate, aggressive)
 CLEANUP_PROFILE="safe"
+
+# Skip the run entirely unless root filesystem usage >= this percentage
+# (0 = always run). Useful for cron: only clean when space is actually tight.
+ONLY_IF_USAGE=0
 
 # New cleanup targets (v3.0)
 CLEANUP_SNAP_CACHE=false      # /var/lib/snapd/cache/
@@ -273,23 +277,43 @@ check_root() {
     fi
 }
 
-# Acquire lock file to prevent multiple instances
+# Acquire lock file to prevent multiple instances.
+# Uses flock when available (atomic, auto-released if the process is killed);
+# falls back to a PID file check otherwise.
+_LOCK_FD=""
 acquire_lock() {
-    if [[ -f "$LOCK_FILE" ]]; then
-        local lock_pid
-        lock_pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
-
-        if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
-            print_error "Another instance is already running (PID: $lock_pid)"
-            print_error "If this is incorrect, remove $LOCK_FILE and try again"
+    if command -v flock &> /dev/null; then
+        # Brace group keeps the 2>/dev/null scoped to this open only —
+        # a bare 'exec ... 2>/dev/null' would silence stderr for the
+        # rest of the script
+        if ! { exec {_LOCK_FD}>>"$LOCK_FILE"; } 2>/dev/null; then
+            print_error "Cannot open lock file $LOCK_FILE"
             exit 1
-        else
-            print_warning "Stale lock file found, removing..."
-            rm -f "$LOCK_FILE"
         fi
-    fi
+        if ! flock -n "$_LOCK_FD"; then
+            local lock_pid
+            lock_pid=$(head -1 "$LOCK_FILE" 2>/dev/null || true)
+            print_error "Another instance is already running${lock_pid:+ (PID: $lock_pid)}"
+            exit 1
+        fi
+        echo $$ > "$LOCK_FILE"
+    else
+        if [[ -f "$LOCK_FILE" ]]; then
+            local lock_pid
+            lock_pid=$(head -1 "$LOCK_FILE" 2>/dev/null || true)
 
-    echo $$ > "$LOCK_FILE"
+            if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+                print_error "Another instance is already running (PID: $lock_pid)"
+                print_error "If this is incorrect, remove $LOCK_FILE and try again"
+                exit 1
+            else
+                print_warning "Stale lock file found, removing..."
+                rm -f "$LOCK_FILE"
+            fi
+        fi
+
+        echo $$ > "$LOCK_FILE"
+    fi
     log_message "INFO" "Lock acquired (PID: $$)"
 }
 
@@ -304,6 +328,7 @@ release_lock() {
 # Cleanup function called on error or exit
 cleanup_on_exit() {
     local exit_code=$?
+    restore_stopped_services
     release_lock
 
     if [[ $exit_code -ne 0 ]]; then
@@ -323,6 +348,22 @@ setup_error_handling() {
 ################################################################################
 # Service Management Helper Functions
 ################################################################################
+
+# Services this run stopped and has not yet restarted. Restored by the EXIT
+# trap so a mid-run failure never leaves monitoring services down.
+_STOPPED_SERVICES=()
+
+# Restart any services we stopped (called on normal and error exit paths)
+restore_stopped_services() {
+    local service
+    for service in "${_STOPPED_SERVICES[@]}"; do
+        if ! is_service_running "$service"; then
+            print_warning "Restarting $service (left stopped by interrupted cleanup)"
+            start_service "$service" || true
+        fi
+    done
+    _STOPPED_SERVICES=()
+}
 
 # Check if a systemd service is running
 is_service_running() {
@@ -388,7 +429,9 @@ run_with_service_control() {
     if is_service_running "$service"; then
         was_running=true
         if [[ "$STOP_SERVICES" == true ]]; then
-            if ! stop_service "$service"; then
+            if stop_service "$service"; then
+                _STOPPED_SERVICES+=("$service")
+            else
                 print_warning "$service cleanup may be incomplete (service still running)"
             fi
         else
@@ -405,6 +448,13 @@ run_with_service_control() {
         if ! is_service_running "$service"; then
             start_service "$service"
         fi
+        # Restarted on the normal path; drop it from the EXIT-trap restore list
+        local remaining=()
+        local s
+        for s in "${_STOPPED_SERVICES[@]}"; do
+            [[ "$s" == "$service" ]] || remaining+=("$s")
+        done
+        _STOPPED_SERVICES=("${remaining[@]}")
     fi
 }
 
@@ -569,6 +619,12 @@ preflight_checks() {
     done
 }
 
+# Current root filesystem usage percentage (integer; empty if unknown)
+get_root_usage_percent() {
+    df --output=pcent / 2>/dev/null \
+        | awk 'NR==2 {for (i=1; i<=NF; i++) if ($i ~ /%$/) {gsub(/%/, "", $i); print $i; exit}}'
+}
+
 # Capture used disk space (bytes) for later delta calculations
 get_used_space() {
     df --output=used -B1 / 2>/dev/null | awk 'NR==2 && NF {print $1; found=1; exit} END {if (!found) print 0}'
@@ -649,6 +705,8 @@ CONFIGURATION:
     --temp-age DAYS         Age threshold for temporary files (default: $TEMP_FILE_AGE)
     --journal-days DAYS     Days to keep journal logs (default: $JOURNAL_KEEP_DAYS)
     --kernel-keep N         Number of old kernels to keep (default: $KERNEL_KEEP_COUNT)
+    --only-if-usage PCT     Skip the run unless root filesystem usage is at
+                            least PCT percent (useful for cron jobs)
 
 ANALYSIS MODE:
     --analyze               Run read-only system analysis (no changes made)
@@ -663,6 +721,9 @@ EXAMPLES:
 
     # Run non-interactively with logging
     sudo $SCRIPT_NAME --yes --log-file /var/log/logcleaner.log
+
+    # Cron-friendly: only clean when the root filesystem is at least 85% full
+    sudo $SCRIPT_NAME --yes --only-if-usage 85
 
     # Enable Docker and package cache cleanup (in addition to defaults)
     sudo $SCRIPT_NAME --docker --pkg-cache
@@ -937,6 +998,11 @@ parse_arguments() {
                 _USER_SET_PROMETHEUS_DATA_AGE=true
                 shift 2
                 ;;
+            --only-if-usage)
+                require_number "--only-if-usage" "${2:-}"
+                ONLY_IF_USAGE="$2"
+                shift 2
+                ;;
             --analyze)
                 ANALYZE_MODE=true
                 shift
@@ -1103,6 +1169,7 @@ cleanup_journal() {
     print_status "Journal size before: $(bytes_to_human "$size_before")"
 
     if [[ "$DRY_RUN" == true ]]; then
+        print_dry_run "Would rotate journal"
         print_dry_run "Would vacuum journal (keep last ${JOURNAL_KEEP_DAYS} days)"
         # Estimate freed space (conservative estimate: 30% of current size)
         local estimated_freed=$((size_before * 30 / 100))
@@ -1111,6 +1178,10 @@ cleanup_journal() {
             print_dry_run "Estimated space to free: $(bytes_to_human "$estimated_freed")"
         fi
     else
+        # Rotate first: vacuum only removes archived files, so without a
+        # rotate the active journal files are never reclaimed
+        journalctl --rotate >/dev/null 2>&1 || true
+
         # Vacuum journal - keep last N days
         if journalctl --vacuum-time="${JOURNAL_KEEP_DAYS}d" >/dev/null 2>&1; then
             local size_after
@@ -1813,6 +1884,22 @@ cleanup_temp_files() {
     local freed=0
     local count=0
 
+    # Entries that live in temp dirs but belong to running sessions/services.
+    # Deleting these breaks X11, ssh-agent, tmux/screen, and sandboxed
+    # systemd units (mirrors systemd-tmpfiles' default exclusions).
+    local -a protected=(
+        -name 'systemd-private-*'
+        -o -name 'snap-private-tmp'
+        -o -name '.X11-unix'
+        -o -name '.ICE-unix'
+        -o -name '.XIM-unix'
+        -o -name '.font-unix'
+        -o -name 'ssh-*'
+        -o -name 'tmux-*'
+        -o -name 'screen'
+        -o -name '.screen'
+    )
+
     # Helper to clean a directory
     clean_temp_dir() {
         local dir=$1
@@ -1834,7 +1921,8 @@ cleanup_temp_files() {
                     count=$((count + 1))
                 fi
             fi
-        done < <(find "$dir" -mindepth 1 \( -type f -o -type l -o -type s -o -type p \) -mtime +"${TEMP_FILE_AGE}" -printf '%s\t%p\0' 2>/dev/null)
+        done < <(find "$dir" -mindepth 1 \( "${protected[@]}" \) -prune \
+            -o \( -type f -o -type l -o -type s -o -type p \) -mtime +"${TEMP_FILE_AGE}" -printf '%s\t%p\0' 2>/dev/null)
 
         # Remove empty directories that are older than threshold
         local dir_removed=0
@@ -1847,7 +1935,8 @@ cleanup_temp_files() {
                     dir_removed=$((dir_removed + 1))
                 fi
             fi
-        done < <(find "$dir" -type d -empty -mtime +"${TEMP_FILE_AGE}" -print0 2>/dev/null)
+        done < <(find "$dir" -mindepth 1 \( "${protected[@]}" \) -prune \
+            -o -type d -empty -mtime +"${TEMP_FILE_AGE}" -print0 2>/dev/null)
 
         if (( dir_removed > 0 )); then
             print_info "Would remove/Removed $dir_removed empty director$( (( dir_removed == 1 )) && echo 'y' || echo 'ies') from $dir"
@@ -2622,6 +2711,19 @@ main() {
 
     # Check for root privileges
     check_root
+
+    # Skip the run entirely if disk usage is below the requested threshold
+    if (( ONLY_IF_USAGE > 0 )); then
+        local usage_pct
+        usage_pct=$(get_root_usage_percent)
+        usage_pct="${usage_pct:-0}"
+        if (( usage_pct < ONLY_IF_USAGE )); then
+            print_status "Root filesystem usage ${usage_pct}% is below threshold ${ONLY_IF_USAGE}%, nothing to do"
+            log_message "INFO" "Usage ${usage_pct}% < threshold ${ONLY_IF_USAGE}%, skipping cleanup"
+            exit 0
+        fi
+        print_status "Root filesystem usage ${usage_pct}% >= ${ONLY_IF_USAGE}%, proceeding with cleanup"
+    fi
 
     # Acquire lock to prevent multiple instances
     acquire_lock

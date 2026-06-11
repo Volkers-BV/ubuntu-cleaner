@@ -178,3 +178,11 @@ LOG_FILE="/var/log/logcleaner.log"
 # Or customize a profile with overrides:
 # CLEANUP_PROFILE="moderate"
 # CLEANUP_NETDATA=false  # Override: don't touch Netdata
+
+################################################################################
+# Conditional Execution
+################################################################################
+
+# Skip the run entirely unless root filesystem usage is at least this
+# percentage (0 = always run). Useful for cron jobs.
+# ONLY_IF_USAGE=85

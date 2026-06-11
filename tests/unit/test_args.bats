@@ -84,3 +84,35 @@ setup() {
     assert_success
     rm -f "$tmpfile"
 }
+
+@test "--temp-age rejects non-numeric value" {
+    run bash logcleaner.sh --temp-age abc 2>&1
+    assert_failure
+    assert_output --partial "Invalid value for --temp-age"
+}
+
+@test "--journal-days rejects missing value" {
+    run bash logcleaner.sh --journal-days 2>&1
+    assert_failure
+    assert_output --partial "Invalid value for --journal-days"
+}
+
+@test "--only-if-usage flag is recognized" {
+    run bash logcleaner.sh --only-if-usage 85 --version
+    assert_success
+    refute_output --partial "Unknown option"
+}
+
+@test "--only-if-usage rejects non-numeric value" {
+    run bash logcleaner.sh --only-if-usage high 2>&1
+    assert_failure
+    assert_output --partial "Invalid value for --only-if-usage"
+}
+
+@test "--only-if-usage 100 skips cleanup on a non-full disk" {
+    run bash logcleaner.sh --yes --only-if-usage 100 \
+        --skip-kernels --skip-journal --skip-gz-logs \
+        --skip-apt --skip-snap --skip-temp 2>&1
+    assert_success
+    assert_output --partial "below threshold"
+}
