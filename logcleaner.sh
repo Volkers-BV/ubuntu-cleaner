@@ -25,9 +25,9 @@ set -euo pipefail  # Exit on error, undefined variables, and pipe failures
 # Script Metadata
 ################################################################################
 
-readonly VERSION="3.1.2"
-readonly SCRIPT_NAME="$(basename "$0")"
-readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly VERSION="3.1.3"
+SCRIPT_NAME="$(basename "$0")"
+readonly SCRIPT_NAME
 CONFIG_FILE="/etc/logcleaner.conf"
 readonly LOCK_FILE="/var/run/logcleaner.pid"
 readonly DEFAULT_LOG_FILE="/var/log/logcleaner.log"
@@ -242,8 +242,8 @@ bytes_to_human() {
     elif (( bytes < 1073741824 )); then
         echo "$(( bytes / 1048576 ))MB"
     else
-        # Use awk for decimal division only for GB+ sizes
-        printf "%.2fGB\n" "$(awk "BEGIN {print $bytes / 1073741824}")"
+        # Two decimal places via integer math (no subprocess)
+        printf '%d.%02dGB\n' $(( bytes / 1073741824 )) $(( (bytes % 1073741824) * 100 / 1073741824 ))
     fi
 }
 
@@ -571,7 +571,7 @@ preflight_checks() {
 
 # Capture used disk space (bytes) for later delta calculations
 get_used_space() {
-    df --output=used -B1 / 2>/dev/null | tail -n 1 | awk '{print $1}' | awk 'NF {print; exit} END {if (NR==0) print 0}'
+    df --output=used -B1 / 2>/dev/null | awk 'NR==2 && NF {print $1; found=1; exit} END {if (!found) print 0}'
 }
 
 # Show help message
@@ -664,8 +664,8 @@ EXAMPLES:
     # Run non-interactively with logging
     sudo $SCRIPT_NAME --yes --log-file /var/log/logcleaner.log
 
-    # Run only Docker and package cache cleanup
-    sudo $SCRIPT_NAME --only-docker --pkg-cache
+    # Enable Docker and package cache cleanup (in addition to defaults)
+    sudo $SCRIPT_NAME --docker --pkg-cache
 
     # Clean with custom retention periods
     sudo $SCRIPT_NAME --temp-age 14 --journal-days 3
@@ -703,6 +703,17 @@ EOF
 show_version() {
     echo "Ubuntu Log Cleaner v${VERSION}"
     exit 0
+}
+
+# Validate that an option value is a non-negative integer
+require_number() {
+    local opt="$1"
+    local value="${2:-}"
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        print_error "Invalid value for $opt: '${value}' (expected a non-negative integer)"
+        echo "Run '$SCRIPT_NAME --help' for usage information"
+        exit 1
+    fi
 }
 
 # Parse command-line arguments
@@ -754,16 +765,19 @@ parse_arguments() {
                 shift 2
                 ;;
             --temp-age)
+                require_number "--temp-age" "${2:-}"
                 TEMP_FILE_AGE="$2"
                 _USER_SET_TEMP_FILE_AGE=true
                 shift 2
                 ;;
             --journal-days)
+                require_number "--journal-days" "${2:-}"
                 JOURNAL_KEEP_DAYS="$2"
                 _USER_SET_JOURNAL_KEEP_DAYS=true
                 shift 2
                 ;;
             --kernel-keep)
+                require_number "--kernel-keep" "${2:-}"
                 KERNEL_KEEP_COUNT="$2"
                 shift 2
                 ;;
@@ -906,16 +920,19 @@ parse_arguments() {
                 shift
                 ;;
             --crash-age)
+                require_number "--crash-age" "${2:-}"
                 CRASH_REPORT_AGE="$2"
                 _USER_SET_CRASH_REPORT_AGE=true
                 shift 2
                 ;;
             --netdata-age)
+                require_number "--netdata-age" "${2:-}"
                 NETDATA_DB_AGE="$2"
                 _USER_SET_NETDATA_DB_AGE=true
                 shift 2
                 ;;
             --prometheus-age)
+                require_number "--prometheus-age" "${2:-}"
                 PROMETHEUS_DATA_AGE="$2"
                 _USER_SET_PROMETHEUS_DATA_AGE=true
                 shift 2
@@ -1043,7 +1060,7 @@ cleanup_old_kernels() {
             size_before=$((size_before * 1024))  # Convert KB to bytes
 
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove: $pkg ($(bytes_to_human $size_before))"
+                print_dry_run "Would remove: $pkg ($(bytes_to_human "$size_before"))"
                 version_freed=$((version_freed + size_before))
                 count=$((count + 1))
             else
@@ -1065,7 +1082,7 @@ cleanup_old_kernels() {
 
     if (( count > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Removed $count kernel package(s), freed $(bytes_to_human $freed)"
+        print_success "Removed $count kernel package(s), freed $(bytes_to_human "$freed")"
     else
         print_warning "No kernels were removed"
     fi
@@ -1083,7 +1100,7 @@ cleanup_journal() {
     local size_before
     size_before=$(get_size /var/log/journal)
 
-    print_status "Journal size before: $(bytes_to_human $size_before)"
+    print_status "Journal size before: $(bytes_to_human "$size_before")"
 
     if [[ "$DRY_RUN" == true ]]; then
         print_dry_run "Would vacuum journal (keep last ${JOURNAL_KEEP_DAYS} days)"
@@ -1091,11 +1108,11 @@ cleanup_journal() {
         local estimated_freed=$((size_before * 30 / 100))
         if (( estimated_freed > 0 )); then
             TOTAL_FREED=$((TOTAL_FREED + estimated_freed))
-            print_dry_run "Estimated space to free: $(bytes_to_human $estimated_freed)"
+            print_dry_run "Estimated space to free: $(bytes_to_human "$estimated_freed")"
         fi
     else
         # Vacuum journal - keep last N days
-        if journalctl --vacuum-time=${JOURNAL_KEEP_DAYS}d >/dev/null 2>&1; then
+        if journalctl --vacuum-time="${JOURNAL_KEEP_DAYS}d" >/dev/null 2>&1; then
             local size_after
             size_after=$(get_size /var/log/journal)
             local freed=$((size_before - size_after))
@@ -1107,7 +1124,7 @@ cleanup_journal() {
 
             if (( freed > 0 )); then
                 TOTAL_FREED=$((TOTAL_FREED + freed))
-                print_success "Journal vacuumed, freed $(bytes_to_human $freed)"
+                print_success "Journal vacuumed, freed $(bytes_to_human "$freed")"
             else
                 print_info "Journal was already optimal"
             fi
@@ -1126,38 +1143,34 @@ cleanup_gz_logs() {
         return 0
     fi
 
-    local gz_files
-    gz_files=$(find /var/log -type f -name "*.gz" 2>/dev/null || true)
+    local count=0
+    local freed=0
+    local found=0
 
-    if [[ -z "$gz_files" ]]; then
+    while IFS=$'\t' read -r -d '' size file; do
+        [[ -n "$file" ]] || continue
+        found=$((found + 1))
+
+        if [[ "$DRY_RUN" == true ]]; then
+            print_dry_run "Would remove: $file ($(bytes_to_human "$size"))"
+            freed=$((freed + size))
+            count=$((count + 1))
+        else
+            if rm -f "$file" 2>/dev/null; then
+                freed=$((freed + size))
+                count=$((count + 1))
+            fi
+        fi
+    done < <(find /var/log -type f -name "*.gz" -printf '%s\t%p\0' 2>/dev/null)
+
+    if (( found == 0 )); then
         print_warning "No .gz log files found"
         return 0
     fi
 
-    local count=0
-    local freed=0
-
-    while IFS= read -r file; do
-        if [[ -n "$file" && -f "$file" ]]; then
-            local size
-            size=$(get_size "$file")
-
-            if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove: $file ($(bytes_to_human $size))"
-                freed=$((freed + size))
-                count=$((count + 1))
-            else
-                if rm -f "$file" 2>/dev/null; then
-                    freed=$((freed + size))
-                    count=$((count + 1))
-                fi
-            fi
-        fi
-    done <<< "$gz_files"
-
     if (( count > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Removed $count .gz log file(s), freed $(bytes_to_human $freed)"
+        print_success "Removed $count .gz log file(s), freed $(bytes_to_human "$freed")"
     else
         print_warning "No .gz files were removed"
     fi
@@ -1183,20 +1196,20 @@ cleanup_apt_cache() {
         local estimated_freed=$((size_before * 70 / 100))
         if (( estimated_freed > 0 )); then
             TOTAL_FREED=$((TOTAL_FREED + estimated_freed))
-            print_dry_run "Estimated space to free: $(bytes_to_human $estimated_freed)"
+            print_dry_run "Estimated space to free: $(bytes_to_human "$estimated_freed")"
         fi
     else
-        local dpkg_opts="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+        local dpkg_opts=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
         print_status "Running apt-get clean..."
-        apt-get clean $dpkg_opts >/dev/null 2>&1
+        apt-get clean "${dpkg_opts[@]}" >/dev/null 2>&1
 
         print_info "Running apt-get autoclean..."
-        apt-get autoclean -y $dpkg_opts >/dev/null 2>&1
+        apt-get autoclean -y "${dpkg_opts[@]}" >/dev/null 2>&1
 
         print_info "Running apt-get autoremove..."
         local autoremove_output
-        autoremove_output=$(apt-get autoremove --purge -y $dpkg_opts 2>&1)
+        autoremove_output=$(apt-get autoremove --purge -y "${dpkg_opts[@]}" 2>&1)
 
         local size_after
         size_after=$(get_size /var/cache/apt/archives)
@@ -1212,15 +1225,15 @@ cleanup_apt_cache() {
             print_info "No packages to autoremove"
         else
             local removed_count
-            removed_count=$(echo "$autoremove_output" | grep -oE '[0-9]+' | grep -B1 'to remove' | head -1 || echo "0")
-            if (( removed_count > 0 )); then
+            removed_count=$(echo "$autoremove_output" | grep -oE '[0-9]+ to remove' | grep -oE '^[0-9]+' || true)
+            if (( ${removed_count:-0} > 0 )); then
                 print_info "Autoremoved $removed_count package(s)"
             fi
         fi
 
         if (( freed > 0 )); then
             TOTAL_FREED=$((TOTAL_FREED + freed))
-            print_success "APT cache cleaned, freed $(bytes_to_human $freed)"
+            print_success "APT cache cleaned, freed $(bytes_to_human "$freed")"
         else
             print_info "APT cache was already clean"
         fi
@@ -1258,7 +1271,7 @@ cleanup_snap_revisions() {
             fi
 
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove $snap_name revision $revision ($(bytes_to_human $size))"
+                print_dry_run "Would remove $snap_name revision $revision ($(bytes_to_human "$size"))"
                 freed=$((freed + size))
                 count=$((count + 1))
             else
@@ -1275,7 +1288,7 @@ cleanup_snap_revisions() {
 
     if (( count > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Removed $count snap revision(s), freed $(bytes_to_human $freed)"
+        print_success "Removed $count snap revision(s), freed $(bytes_to_human "$freed")"
     else
         print_warning "No snap revisions were removed"
     fi
@@ -1303,30 +1316,27 @@ cleanup_snap_cache() {
     local count=0
     local freed=0
 
-    while IFS= read -r -d '' file; do
-        if [[ -f "$file" ]]; then
-            local size
-            size=$(get_size "$file")
+    while IFS=$'\t' read -r -d '' size file; do
+        [[ -n "$file" ]] || continue
 
-            if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove: $file ($(bytes_to_human $size))"
+        if [[ "$DRY_RUN" == true ]]; then
+            print_dry_run "Would remove: $file ($(bytes_to_human "$size"))"
+            freed=$((freed + size))
+            count=$((count + 1))
+        else
+            if rm -f "$file" 2>/dev/null; then
+                log_message "INFO" "[snap-cache] Removed: $file ($(bytes_to_human "$size"))"
                 freed=$((freed + size))
                 count=$((count + 1))
             else
-                if rm -f "$file" 2>/dev/null; then
-                    log_message "INFO" "[snap-cache] Removed: $file ($(bytes_to_human $size))"
-                    freed=$((freed + size))
-                    count=$((count + 1))
-                else
-                    print_warning "Failed to remove: $file"
-                fi
+                print_warning "Failed to remove: $file"
             fi
         fi
-    done < <(find "$snap_cache_dir" -type f -print0 2>/dev/null)
+    done < <(find "$snap_cache_dir" -type f -printf '%s\t%p\0' 2>/dev/null)
 
     if (( count > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Snap cache cleaned, freed $(bytes_to_human $freed) ($count files)"
+        print_success "Snap cache cleaned, freed $(bytes_to_human "$freed") ($count files)"
     else
         print_info "No snap cache files to remove"
     fi
@@ -1355,38 +1365,32 @@ cleanup_apt_lists() {
     local freed=0
 
     # Remove all files except lock and partial directory
-    while IFS= read -r -d '' file; do
-        local basename
-        basename=$(basename "$file")
+    while IFS=$'\t' read -r -d '' size file; do
+        [[ -n "$file" ]] || continue
 
         # Skip lock files and partial directory
-        if [[ "$basename" == "lock" ]] || [[ "$file" == *"/partial/"* ]]; then
+        if [[ "${file##*/}" == "lock" ]] || [[ "$file" == *"/partial/"* ]]; then
             continue
         fi
 
-        if [[ -f "$file" ]]; then
-            local size
-            size=$(get_size "$file")
-
-            if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove: $file ($(bytes_to_human $size))"
+        if [[ "$DRY_RUN" == true ]]; then
+            print_dry_run "Would remove: $file ($(bytes_to_human "$size"))"
+            freed=$((freed + size))
+            count=$((count + 1))
+        else
+            if rm -f "$file" 2>/dev/null; then
+                log_message "INFO" "[apt-lists] Removed: $file"
                 freed=$((freed + size))
                 count=$((count + 1))
             else
-                if rm -f "$file" 2>/dev/null; then
-                    log_message "INFO" "[apt-lists] Removed: $file"
-                    freed=$((freed + size))
-                    count=$((count + 1))
-                else
-                    print_warning "Failed to remove: $file"
-                fi
+                print_warning "Failed to remove: $file"
             fi
         fi
-    done < <(find "$apt_lists_dir" -type f -print0 2>/dev/null)
+    done < <(find "$apt_lists_dir" -type f -printf '%s\t%p\0' 2>/dev/null)
 
     if (( count > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "APT lists cleaned, freed $(bytes_to_human $freed) ($count files)"
+        print_success "APT lists cleaned, freed $(bytes_to_human "$freed") ($count files)"
         if [[ "$DRY_RUN" == false ]]; then
             print_info "Note: Run 'apt update' to refresh package lists when needed"
         fi
@@ -1426,48 +1430,42 @@ cleanup_crash_reports() {
         print_info "Removing all crash reports"
     fi
 
-    while IFS= read -r -d '' file; do
-        if [[ -f "$file" ]]; then
-            local size
-            size=$(get_size "$file")
+    while IFS=$'\t' read -r -d '' size file; do
+        [[ -n "$file" ]] || continue
 
-            if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove: $file ($(bytes_to_human $size))"
+        if [[ "$DRY_RUN" == true ]]; then
+            print_dry_run "Would remove: $file ($(bytes_to_human "$size"))"
+            freed=$((freed + size))
+            count=$((count + 1))
+        else
+            if rm -f "$file" 2>/dev/null; then
+                log_message "INFO" "[crash-reports] Removed: $file"
                 freed=$((freed + size))
                 count=$((count + 1))
             else
-                if rm -f "$file" 2>/dev/null; then
-                    log_message "INFO" "[crash-reports] Removed: $file"
-                    freed=$((freed + size))
-                    count=$((count + 1))
-                else
-                    print_warning "Failed to remove: $file"
-                fi
+                print_warning "Failed to remove: $file"
             fi
         fi
-    done < <(find "${find_args[@]}" -print0 2>/dev/null)
+    done < <(find "${find_args[@]}" -printf '%s\t%p\0' 2>/dev/null)
 
     # Also clean .uploaded files
-    while IFS= read -r -d '' file; do
-        if [[ -f "$file" ]]; then
-            local size
-            size=$(get_size "$file")
+    while IFS=$'\t' read -r -d '' size file; do
+        [[ -n "$file" ]] || continue
 
-            if [[ "$DRY_RUN" == true ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+            freed=$((freed + size))
+            count=$((count + 1))
+        else
+            if rm -f "$file" 2>/dev/null; then
                 freed=$((freed + size))
                 count=$((count + 1))
-            else
-                if rm -f "$file" 2>/dev/null; then
-                    freed=$((freed + size))
-                    count=$((count + 1))
-                fi
             fi
         fi
-    done < <(find "$crash_dir" -type f -name "*.uploaded" -print0 2>/dev/null)
+    done < <(find "$crash_dir" -type f -name "*.uploaded" -printf '%s\t%p\0' 2>/dev/null)
 
     if (( count > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Crash reports cleaned, freed $(bytes_to_human $freed) ($count files)"
+        print_success "Crash reports cleaned, freed $(bytes_to_human "$freed") ($count files)"
     else
         print_info "No crash reports to remove"
     fi
@@ -1479,7 +1477,6 @@ cleanup_netdata() {
 
     # Detect Netdata installation path
     local netdata_base=""
-    local netdata_service="netdata"
 
     if [[ -d "/opt/netdata" ]]; then
         netdata_base="/opt/netdata"
@@ -1510,12 +1507,12 @@ cleanup_netdata() {
 
         if (( cache_size > 0 )); then
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would clean Netdata cache: $cache_dir ($(bytes_to_human $cache_size))"
+                print_dry_run "Would clean Netdata cache: $cache_dir ($(bytes_to_human "$cache_size"))"
                 freed=$((freed + cache_size))
             else
                 print_info "Cleaning Netdata cache: $cache_dir"
-                if rm -rf "$cache_dir"/* 2>/dev/null; then
-                    log_message "INFO" "[netdata] Cleaned cache: $(bytes_to_human $cache_size)"
+                if rm -rf "${cache_dir:?}"/* 2>/dev/null; then
+                    log_message "INFO" "[netdata] Cleaned cache: $(bytes_to_human "$cache_size")"
                     freed=$((freed + cache_size))
                 else
                     print_warning "Failed to clean some Netdata cache files (may be locked)"
@@ -1532,12 +1529,11 @@ cleanup_netdata() {
         if (( NETDATA_DB_AGE > 0 )); then
             print_info "Removing Netdata DB files older than $NETDATA_DB_AGE days"
 
-            while IFS= read -r -d '' file; do
-                local size
-                size=$(get_size "$file")
+            while IFS=$'\t' read -r -d '' size file; do
+                [[ -n "$file" ]] || continue
 
                 if [[ "$DRY_RUN" == true ]]; then
-                    print_dry_run "Would remove: $file ($(bytes_to_human $size))"
+                    print_dry_run "Would remove: $file ($(bytes_to_human "$size"))"
                     db_freed=$((db_freed + size))
                     db_count=$((db_count + 1))
                 else
@@ -1547,12 +1543,12 @@ cleanup_netdata() {
                         db_count=$((db_count + 1))
                     fi
                 fi
-            done < <(find "$db_dir" -type f -mtime +"$NETDATA_DB_AGE" -print0 2>/dev/null)
+            done < <(find "$db_dir" -type f -mtime +"$NETDATA_DB_AGE" -printf '%s\t%p\0' 2>/dev/null)
 
             freed=$((freed + db_freed))
 
             if (( db_count > 0 )); then
-                print_info "Removed $db_count old DB files ($(bytes_to_human $db_freed))"
+                print_info "Removed $db_count old DB files ($(bytes_to_human "$db_freed"))"
             fi
         else
             # Aggressive mode - clean all
@@ -1561,11 +1557,11 @@ cleanup_netdata() {
 
             if (( db_size > 0 )); then
                 if [[ "$DRY_RUN" == true ]]; then
-                    print_dry_run "Would clean Netdata DB: $db_dir ($(bytes_to_human $db_size))"
+                    print_dry_run "Would clean Netdata DB: $db_dir ($(bytes_to_human "$db_size"))"
                     freed=$((freed + db_size))
                 else
-                    if rm -rf "$db_dir"/* 2>/dev/null; then
-                        log_message "INFO" "[netdata] Cleaned dbengine: $(bytes_to_human $db_size)"
+                    if rm -rf "${db_dir:?}"/* 2>/dev/null; then
+                        log_message "INFO" "[netdata] Cleaned dbengine: $(bytes_to_human "$db_size")"
                         freed=$((freed + db_size))
                     fi
                 fi
@@ -1575,7 +1571,7 @@ cleanup_netdata() {
 
     if (( freed > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Netdata cleaned, freed $(bytes_to_human $freed)"
+        print_success "Netdata cleaned, freed $(bytes_to_human "$freed")"
     else
         print_info "No Netdata data to clean"
     fi
@@ -1612,12 +1608,11 @@ cleanup_prometheus() {
     # Clean old WAL segments
     local wal_dir="$prometheus_dir/wal"
     if [[ -d "$wal_dir" ]]; then
-        while IFS= read -r -d '' file; do
-            local size
-            size=$(get_size "$file")
+        while IFS=$'\t' read -r -d '' size file; do
+            [[ -n "$file" ]] || continue
 
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove old WAL: $file ($(bytes_to_human $size))"
+                print_dry_run "Would remove old WAL: $file ($(bytes_to_human "$size"))"
                 freed=$((freed + size))
                 count=$((count + 1))
             else
@@ -1627,18 +1622,17 @@ cleanup_prometheus() {
                     count=$((count + 1))
                 fi
             fi
-        done < <(find "$wal_dir" -type f -mtime +"$PROMETHEUS_DATA_AGE" -print0 2>/dev/null)
+        done < <(find "$wal_dir" -type f -mtime +"$PROMETHEUS_DATA_AGE" -printf '%s\t%p\0' 2>/dev/null)
     fi
 
     # Clean old chunks
     local chunks_head="$prometheus_dir/chunks_head"
     if [[ -d "$chunks_head" ]]; then
-        while IFS= read -r -d '' file; do
-            local size
-            size=$(get_size "$file")
+        while IFS=$'\t' read -r -d '' size file; do
+            [[ -n "$file" ]] || continue
 
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove old chunk: $file ($(bytes_to_human $size))"
+                print_dry_run "Would remove old chunk: $file ($(bytes_to_human "$size"))"
                 freed=$((freed + size))
                 count=$((count + 1))
             else
@@ -1648,12 +1642,12 @@ cleanup_prometheus() {
                     count=$((count + 1))
                 fi
             fi
-        done < <(find "$chunks_head" -type f -mtime +"$PROMETHEUS_DATA_AGE" -print0 2>/dev/null)
+        done < <(find "$chunks_head" -type f -mtime +"$PROMETHEUS_DATA_AGE" -printf '%s\t%p\0' 2>/dev/null)
     fi
 
     if (( freed > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Prometheus cleaned, freed $(bytes_to_human $freed) ($count files)"
+        print_success "Prometheus cleaned, freed $(bytes_to_human "$freed") ($count files)"
     else
         print_info "No old Prometheus data to clean"
     fi
@@ -1685,11 +1679,11 @@ cleanup_grafana() {
 
         if (( png_size > 0 )); then
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would clean Grafana PNG cache: $(bytes_to_human $png_size)"
+                print_dry_run "Would clean Grafana PNG cache: $(bytes_to_human "$png_size")"
                 freed=$((freed + png_size))
             else
-                if rm -rf "$png_dir"/* 2>/dev/null; then
-                    log_message "INFO" "[grafana] Cleaned PNG cache: $(bytes_to_human $png_size)"
+                if rm -rf "${png_dir:?}"/* 2>/dev/null; then
+                    log_message "INFO" "[grafana] Cleaned PNG cache: $(bytes_to_human "$png_size")"
                     freed=$((freed + png_size))
                 fi
             fi
@@ -1702,9 +1696,8 @@ cleanup_grafana() {
         local session_freed=0
         local session_count=0
 
-        while IFS= read -r -d '' file; do
-            local size
-            size=$(get_size "$file")
+        while IFS=$'\t' read -r -d '' size file; do
+            [[ -n "$file" ]] || continue
 
             if [[ "$DRY_RUN" == true ]]; then
                 session_freed=$((session_freed + size))
@@ -1715,7 +1708,7 @@ cleanup_grafana() {
                     session_count=$((session_count + 1))
                 fi
             fi
-        done < <(find "$sessions_dir" -type f -mtime +7 -print0 2>/dev/null)
+        done < <(find "$sessions_dir" -type f -mtime +7 -printf '%s\t%p\0' 2>/dev/null)
 
         if (( session_count > 0 )); then
             freed=$((freed + session_freed))
@@ -1731,11 +1724,11 @@ cleanup_grafana() {
 
         if (( csv_size > 0 )); then
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would clean Grafana CSV cache: $(bytes_to_human $csv_size)"
+                print_dry_run "Would clean Grafana CSV cache: $(bytes_to_human "$csv_size")"
                 freed=$((freed + csv_size))
             else
-                if rm -rf "$csv_dir"/* 2>/dev/null; then
-                    log_message "INFO" "[grafana] Cleaned CSV cache: $(bytes_to_human $csv_size)"
+                if rm -rf "${csv_dir:?}"/* 2>/dev/null; then
+                    log_message "INFO" "[grafana] Cleaned CSV cache: $(bytes_to_human "$csv_size")"
                     freed=$((freed + csv_size))
                 fi
             fi
@@ -1744,7 +1737,7 @@ cleanup_grafana() {
 
     if (( freed > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Grafana cache cleaned, freed $(bytes_to_human $freed)"
+        print_success "Grafana cache cleaned, freed $(bytes_to_human "$freed")"
     else
         print_info "No Grafana cache to clean"
     fi
@@ -1776,7 +1769,7 @@ cleanup_pycache() {
             size=$(get_size "$dir")
 
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove: $dir ($(bytes_to_human $size))"
+                print_dry_run "Would remove: $dir ($(bytes_to_human "$size"))"
                 freed=$((freed + size))
                 count=$((count + 1))
             else
@@ -1789,9 +1782,8 @@ cleanup_pycache() {
         done < <(find "$search_dir" -type d -name "__pycache__" -print0 2>/dev/null)
 
         # Find and remove .pyc files not in __pycache__
-        while IFS= read -r -d '' file; do
-            local size
-            size=$(get_size "$file")
+        while IFS=$'\t' read -r -d '' size file; do
+            [[ -n "$file" ]] || continue
 
             if [[ "$DRY_RUN" == true ]]; then
                 freed=$((freed + size))
@@ -1803,12 +1795,12 @@ cleanup_pycache() {
                     count=$((count + 1))
                 fi
             fi
-        done < <(find "$search_dir" -type f -name "*.pyc" -print0 2>/dev/null)
+        done < <(find "$search_dir" -type f -name "*.pyc" -printf '%s\t%p\0' 2>/dev/null)
     done
 
     if (( freed > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Python cache cleaned, freed $(bytes_to_human $freed) ($count items)"
+        print_success "Python cache cleaned, freed $(bytes_to_human "$freed") ($count items)"
     else
         print_info "No Python cache to clean"
     fi
@@ -1829,12 +1821,11 @@ cleanup_temp_files() {
         print_status "Cleaning $dir..."
 
         # Remove files, symlinks, sockets, and FIFOs
-        while IFS= read -r -d '' entry; do
-            local size
-            size=$(get_size "$entry")
+        while IFS=$'\t' read -r -d '' size entry; do
+            [[ -n "$entry" ]] || continue
 
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove: $entry ($(bytes_to_human $size))"
+                print_dry_run "Would remove: $entry ($(bytes_to_human "$size"))"
                 freed=$((freed + size))
                 count=$((count + 1))
             else
@@ -1843,7 +1834,7 @@ cleanup_temp_files() {
                     count=$((count + 1))
                 fi
             fi
-        done < <(find "$dir" -mindepth 1 \( -type f -o -type l -o -type s -o -type p \) -mtime +${TEMP_FILE_AGE} -print0 2>/dev/null)
+        done < <(find "$dir" -mindepth 1 \( -type f -o -type l -o -type s -o -type p \) -mtime +"${TEMP_FILE_AGE}" -printf '%s\t%p\0' 2>/dev/null)
 
         # Remove empty directories that are older than threshold
         local dir_removed=0
@@ -1856,7 +1847,7 @@ cleanup_temp_files() {
                     dir_removed=$((dir_removed + 1))
                 fi
             fi
-        done < <(find "$dir" -type d -empty -mtime +${TEMP_FILE_AGE} -print0 2>/dev/null)
+        done < <(find "$dir" -type d -empty -mtime +"${TEMP_FILE_AGE}" -print0 2>/dev/null)
 
         if (( dir_removed > 0 )); then
             print_info "Would remove/Removed $dir_removed empty director$( (( dir_removed == 1 )) && echo 'y' || echo 'ies') from $dir"
@@ -1868,7 +1859,7 @@ cleanup_temp_files() {
 
     if (( count > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Removed $count temporary file(s), freed $(bytes_to_human $freed)"
+        print_success "Removed $count temporary file(s), freed $(bytes_to_human "$freed")"
     else
         print_info "No old temporary files found"
     fi
@@ -1933,13 +1924,13 @@ cleanup_package_caches() {
             size_before=$(get_size "$pip_cache_dir")
 
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would clean pip cache at $pip_cache_dir ($(bytes_to_human $size_before))"
+                print_dry_run "Would clean pip cache at $pip_cache_dir ($(bytes_to_human "$size_before"))"
                 freed=$((freed + size_before))
             else
                 print_info "Cleaning pip cache..."
                 if $pip_cmd cache purge >/dev/null 2>&1; then
                     freed=$((freed + size_before))
-                    print_success "Pip cache cleaned, freed $(bytes_to_human $size_before)"
+                    print_success "Pip cache cleaned, freed $(bytes_to_human "$size_before")"
                     total_cleaned=$((total_cleaned + 1))
                 else
                     print_warning "Failed to clean pip cache"
@@ -1965,7 +1956,7 @@ cleanup_package_caches() {
                 local npm_freed=$((size_before - size_after))
                 if (( npm_freed > 0 )); then
                     freed=$((freed + npm_freed))
-                    print_success "NPM cache cleaned, freed $(bytes_to_human $npm_freed)"
+                    print_success "NPM cache cleaned, freed $(bytes_to_human "$npm_freed")"
                     total_cleaned=$((total_cleaned + 1))
                 fi
             else
@@ -1991,7 +1982,7 @@ cleanup_package_caches() {
                 local yarn_freed=$((size_before - size_after))
                 if (( yarn_freed > 0 )); then
                     freed=$((freed + yarn_freed))
-                    print_success "Yarn cache cleaned, freed $(bytes_to_human $yarn_freed)"
+                    print_success "Yarn cache cleaned, freed $(bytes_to_human "$yarn_freed")"
                     total_cleaned=$((total_cleaned + 1))
                 fi
             else
@@ -2003,7 +1994,7 @@ cleanup_package_caches() {
     if (( total_cleaned > 0 )) || [[ "$DRY_RUN" == true ]]; then
         TOTAL_FREED=$((TOTAL_FREED + freed))
         if [[ "$DRY_RUN" == false ]]; then
-            print_success "Package cache cleanup completed, freed $(bytes_to_human $freed)"
+            print_success "Package cache cleanup completed, freed $(bytes_to_human "$freed")"
         fi
     else
         print_warning "No package manager caches found to clean"
@@ -2030,7 +2021,7 @@ cleanup_coredumps() {
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
-        print_dry_run "Would clean coredumps from $coredump_dir ($(bytes_to_human $size_before))"
+        print_dry_run "Would clean coredumps from $coredump_dir ($(bytes_to_human "$size_before"))"
         TOTAL_FREED=$((TOTAL_FREED + size_before))
     else
         print_info "Cleaning coredumps..."
@@ -2050,7 +2041,7 @@ cleanup_coredumps() {
 
         if (( freed > 0 )); then
             TOTAL_FREED=$((TOTAL_FREED + freed))
-            print_success "Coredumps cleaned, freed $(bytes_to_human $freed)"
+            print_success "Coredumps cleaned, freed $(bytes_to_human "$freed")"
         else
             print_info "No coredumps were removed"
         fi
@@ -2069,7 +2060,7 @@ cleanup_thumbnails() {
     [[ -d "/root/.thumbnails" ]] && thumbnail_dirs+=("/root/.thumbnails")
 
     # Find user home directories
-    while IFS=: read -r username _ uid _ _ homedir _; do
+    while IFS=: read -r _ _ uid _ _ homedir _; do
         if (( uid >= 1000 )) && [[ -d "$homedir" ]]; then
             [[ -d "$homedir/.cache/thumbnails" ]] && thumbnail_dirs+=("$homedir/.cache/thumbnails")
             [[ -d "$homedir/.thumbnails" ]] && thumbnail_dirs+=("$homedir/.thumbnails")
@@ -2087,13 +2078,13 @@ cleanup_thumbnails() {
 
         if (( size > 0 )); then
             if [[ "$DRY_RUN" == true ]]; then
-                print_dry_run "Would remove thumbnails from $dir ($(bytes_to_human $size))"
+                print_dry_run "Would remove thumbnails from $dir ($(bytes_to_human "$size"))"
                 freed=$((freed + size))
             else
                 print_status "Cleaning $dir..."
-                if rm -rf "$dir"/* 2>/dev/null; then
+                if rm -rf "${dir:?}"/* 2>/dev/null; then
                     freed=$((freed + size))
-                    print_success "Cleaned $dir, freed $(bytes_to_human $size)"
+                    print_success "Cleaned $dir, freed $(bytes_to_human "$size")"
                 fi
             fi
         fi
@@ -2101,7 +2092,7 @@ cleanup_thumbnails() {
 
     if (( freed > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Thumbnail cleanup completed, freed $(bytes_to_human $freed)"
+        print_success "Thumbnail cleanup completed, freed $(bytes_to_human "$freed")"
     else
         print_info "No thumbnails to remove"
     fi
@@ -2119,30 +2110,26 @@ cleanup_mail() {
         [[ ! -d "$mail_dir" ]] && continue
 
         # Find files older than 30 days
-        while IFS= read -r -d '' mailfile; do
-            if [[ -f "$mailfile" ]]; then
-                local size
-                size=$(get_size "$mailfile")
+        while IFS=$'\t' read -r -d '' size mailfile; do
+            [[ -n "$mailfile" ]] || continue
 
-                # Only remove if file is older than 30 days and not recently modified
-                if [[ "$DRY_RUN" == true ]]; then
-                    print_dry_run "Would remove old mail: $mailfile ($(bytes_to_human $size))"
+            if [[ "$DRY_RUN" == true ]]; then
+                print_dry_run "Would remove old mail: $mailfile ($(bytes_to_human "$size"))"
+                freed=$((freed + size))
+                count=$((count + 1))
+            else
+                print_info "Removing old mail: $mailfile"
+                if rm -f "$mailfile" 2>/dev/null; then
                     freed=$((freed + size))
                     count=$((count + 1))
-                else
-                    print_info "Removing old mail: $mailfile"
-                    if rm -f "$mailfile" 2>/dev/null; then
-                        freed=$((freed + size))
-                        count=$((count + 1))
-                    fi
                 fi
             fi
-        done < <(find "$mail_dir" -type f -mtime +30 -print0 2>/dev/null)
+        done < <(find "$mail_dir" -type f -mtime +30 -printf '%s\t%p\0' 2>/dev/null)
     done
 
     if (( count > 0 )); then
         TOTAL_FREED=$((TOTAL_FREED + freed))
-        print_success "Removed $count old mail file(s), freed $(bytes_to_human $freed)"
+        print_success "Removed $count old mail file(s), freed $(bytes_to_human "$freed")"
     else
         print_info "No old mail to remove"
     fi
@@ -2234,8 +2221,8 @@ analyze_logs() {
     report_kv "Total /var/log size" "$(bytes_to_human "${total_size:-0}")"
 
     local gz_count gz_size
-    gz_count=$(find /var/log -name "*.gz" -type f 2>/dev/null | wc -l)
-    gz_size=$(find /var/log -name "*.gz" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    read -r gz_count gz_size < <(find /var/log -name "*.gz" -type f -printf '%s\n' 2>/dev/null \
+        | awk '{c++; s+=$1} END {print c+0, s+0}')
     report_kv "Compressed (.gz) files" "$gz_count files ($(bytes_to_human "$gz_size"))"
 
     report_line ""
@@ -2260,7 +2247,7 @@ analyze_journal() {
 
     # Use machine-id to target only the system journal (excludes tenant journals like Netdata)
     local machine_id
-    machine_id=$(cat /etc/machine-id 2>/dev/null | head -1 || true)
+    machine_id=$(head -1 /etc/machine-id 2>/dev/null || true)
     local system_journal_dir="/var/log/journal/$machine_id"
 
     local journal_size
@@ -2377,7 +2364,7 @@ analyze_snap() {
 
     local removable_size=0
     if [[ -n "$disabled" ]]; then
-        echo "$disabled" | while IFS= read -r line; do report_line "    $line"; done
+        while IFS= read -r line; do report_line "    $line"; done <<< "$disabled"
 
         while IFS=' ' read -r snap_name _ revision _; do
             local snap_path="/snap/$snap_name/$revision"
@@ -2386,7 +2373,7 @@ analyze_snap() {
                 sz=$(get_size "$snap_path")
                 removable_size=$((removable_size + sz))
             fi
-        done < <(snap list --all 2>/dev/null | grep disabled | awk '{print $1, $2, $3}')
+        done <<< "$disabled"
     else
         report_line "    (none)"
     fi
@@ -2407,8 +2394,8 @@ analyze_temp() {
         [[ ! -d "$dir" ]] && continue
         local total_size old_size old_count
         total_size=$(get_size "$dir")
-        old_size=$(find "$dir" -mindepth 1 -type f -mtime +7 -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
-        old_count=$(find "$dir" -mindepth 1 -type f -mtime +7 2>/dev/null | wc -l)
+        read -r old_count old_size < <(find "$dir" -mindepth 1 -type f -mtime +7 -printf '%s\n' 2>/dev/null \
+            | awk '{c++; s+=$1} END {print c+0, s+0}')
         report_kv "$dir total size" "$(bytes_to_human "$total_size")"
         report_kv "$dir files >7 days old" "$old_count files ($(bytes_to_human "$old_size"))"
         record_estimate "Temp files ($dir)" "$old_size"
@@ -2515,12 +2502,15 @@ analyze_docker() {
         return
     fi
 
+    local docker_df
+    docker_df=$(docker system df 2>/dev/null || true)
+
     report_line ""
     report_line "  Docker disk usage:"
-    docker system df 2>/dev/null | while IFS= read -r line; do report_line "    $line"; done
+    while IFS= read -r line; do report_line "    $line"; done <<< "$docker_df"
 
     local reclaimable_line
-    reclaimable_line=$(docker system df 2>/dev/null | grep -oE '[0-9.]+ [KMGT]?B \(reclaimable\)' | tail -1 || true)
+    reclaimable_line=$(echo "$docker_df" | grep -oE '[0-9.]+ [KMGT]?B \(reclaimable\)' | tail -1 || true)
     if [[ -n "$reclaimable_line" ]]; then
         report_line ""
         report_kv "Total reclaimable" "$reclaimable_line"
@@ -2729,11 +2719,11 @@ main() {
         if (( actual_freed > 0 )); then
             if [[ "$USE_COLORS" == true ]]; then
                 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "${GREEN}Total space freed: $(bytes_to_human $actual_freed)${NC}"
+                echo -e "${GREEN}Total space freed: $(bytes_to_human "$actual_freed")${NC}"
                 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             else
                 echo "======================================================="
-                echo "Total space freed: $(bytes_to_human $actual_freed)"
+                echo "Total space freed: $(bytes_to_human "$actual_freed")"
                 echo "======================================================="
             fi
             print_success "Cleanup completed successfully!"
@@ -2746,11 +2736,11 @@ main() {
         if (( TOTAL_FREED > 0 )); then
             if [[ "$USE_COLORS" == true ]]; then
                 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "${YELLOW}Estimated space that would be freed: $(bytes_to_human $TOTAL_FREED)${NC}"
+                echo -e "${YELLOW}Estimated space that would be freed: $(bytes_to_human "$TOTAL_FREED")${NC}"
                 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             else
                 echo "======================================================="
-                echo "Estimated space that would be freed: $(bytes_to_human $TOTAL_FREED)"
+                echo "Estimated space that would be freed: $(bytes_to_human "$TOTAL_FREED")"
                 echo "======================================================="
             fi
             print_success "Dry run completed!"

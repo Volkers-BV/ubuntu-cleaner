@@ -69,7 +69,7 @@ teardown() {
 
 @test "analyze_journal shows Journal size" {
     run analyze_journal
-    assert_output --partial "Journal size"
+    assert_output --partial "System journal size"
 }
 
 # --- analyze_apt ---
