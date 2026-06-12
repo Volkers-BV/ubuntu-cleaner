@@ -141,6 +141,7 @@ teardown() {
 
 @test "cleanup_package_caches warns when no package managers found" {
     rm -f "$MOCK_BIN/pip" "$MOCK_BIN/pip3" "$MOCK_BIN/npm" "$MOCK_BIN/yarn"
+    restrict_path_to_mocks
     run cleanup_package_caches
     assert_success
     assert_output --partial "No package manager caches found"
@@ -154,6 +155,7 @@ teardown() {
 
 @test "cleanup_docker skips when docker not in PATH" {
     rm -f "$MOCK_BIN/docker"
+    restrict_path_to_mocks
     run cleanup_docker
     assert_success
     assert_output --partial "docker not found, skipping"

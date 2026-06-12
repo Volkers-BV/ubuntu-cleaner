@@ -17,10 +17,10 @@ RUN git clone --depth 1 --branch v1.11.0 \
     && /tmp/bats-core/install.sh /usr/local \
     && rm -rf /tmp/bats-core
 
-# Install bats-support and bats-assert helpers
-RUN git clone --depth 1 \
+# Install bats-support and bats-assert helpers (pinned for reproducible builds)
+RUN git clone --depth 1 --branch v0.3.0 \
     https://github.com/bats-core/bats-support.git /usr/lib/bats-support \
-    && git clone --depth 1 \
+    && git clone --depth 1 --branch v2.1.0 \
     https://github.com/bats-core/bats-assert.git /usr/lib/bats-assert
 
 WORKDIR /opt/logcleaner

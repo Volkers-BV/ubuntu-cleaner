@@ -118,3 +118,21 @@ teardown() {
     assert_success
     assert_output --partial "Would rotate journal"
 }
+
+# --- cleanup_old_kernels (dry-run, mocked dpkg-query) ---
+
+@test "cleanup_old_kernels keeps newest old kernel, removes older" {
+    KERNEL_KEEP_COUNT=1
+    run cleanup_old_kernels
+    assert_success
+    assert_output --partial "Would remove: linux-image-5.15.0-88-generic"
+    refute_output --partial "Would remove: linux-image-5.15.0-91-generic"
+}
+
+@test "cleanup_old_kernels honors KERNEL_KEEP_COUNT" {
+    KERNEL_KEEP_COUNT=2
+    run cleanup_old_kernels
+    assert_success
+    assert_output --partial "Keeping all 2 old kernel version(s)"
+    refute_output --partial "Would remove:"
+}

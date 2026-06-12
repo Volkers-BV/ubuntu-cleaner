@@ -116,3 +116,21 @@ setup() {
     assert_success
     assert_output --partial "below threshold"
 }
+
+@test "CLI flags override config file settings" {
+    local cfg="/tmp/bats-config-$$.conf"
+    echo 'TEMP_FILE_AGE=99' > "$cfg"
+    run bash logcleaner.sh --yes --dry-run --config "$cfg" --only-temp --temp-age 3 2>&1
+    assert_success
+    assert_output --partial "(3+ days old)"
+    rm -f "$cfg"
+}
+
+@test "config file ages survive profile defaults" {
+    local cfg="/tmp/bats-config-$$.conf"
+    echo 'TEMP_FILE_AGE=99' > "$cfg"
+    run bash logcleaner.sh --yes --dry-run --config "$cfg" --only-temp 2>&1
+    assert_success
+    assert_output --partial "(99+ days old)"
+    rm -f "$cfg"
+}

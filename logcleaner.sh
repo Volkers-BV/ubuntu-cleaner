@@ -469,6 +469,16 @@ load_config() {
         # Source the config file safely
         # shellcheck disable=SC1090
         source "$CONFIG_FILE"
+
+        # Ages assigned in the config file count as deliberate choices:
+        # protect them from being overwritten by profile defaults later
+        local var
+        for var in TEMP_FILE_AGE JOURNAL_KEEP_DAYS CRASH_REPORT_AGE NETDATA_DB_AGE PROMETHEUS_DATA_AGE; do
+            if grep -qE "^[[:space:]]*${var}=" "$CONFIG_FILE"; then
+                declare -g "_USER_SET_${var}=true"
+            fi
+        done
+
         log_message "INFO" "Configuration loaded from $CONFIG_FILE"
     fi
 }
@@ -1089,9 +1099,9 @@ cleanup_old_kernels() {
 
     local version_count
     version_count=$(echo "$removable_versions" | wc -l)
-    local versions_to_keep=1
+    local versions_to_keep=$KERNEL_KEEP_COUNT
 
-    if (( version_count <= versions_to_keep )); then
+    if (( versions_to_keep > 0 )) && (( version_count <= versions_to_keep )); then
         print_warning "Keeping all $version_count old kernel version(s) for safety (minimum $versions_to_keep required)"
         return 0
     fi
@@ -2000,9 +2010,11 @@ cleanup_package_caches() {
 
     local freed=0
     local total_cleaned=0
+    local found_managers=0
 
     # Clean pip cache
     if command -v pip3 &> /dev/null || command -v pip &> /dev/null; then
+        found_managers=$((found_managers + 1))
         local pip_cmd
         pip_cmd=$(command -v pip3 || command -v pip)
         local pip_cache_dir
@@ -2030,6 +2042,7 @@ cleanup_package_caches() {
 
     # Clean npm cache
     if command -v npm &> /dev/null; then
+        found_managers=$((found_managers + 1))
         if [[ "$DRY_RUN" == true ]]; then
             print_dry_run "Would clean npm cache"
         else
@@ -2056,6 +2069,7 @@ cleanup_package_caches() {
 
     # Clean yarn cache
     if command -v yarn &> /dev/null; then
+        found_managers=$((found_managers + 1))
         if [[ "$DRY_RUN" == true ]]; then
             print_dry_run "Would clean yarn cache"
         else
@@ -2080,13 +2094,13 @@ cleanup_package_caches() {
         fi
     fi
 
-    if (( total_cleaned > 0 )) || [[ "$DRY_RUN" == true ]]; then
+    if (( found_managers == 0 )); then
+        print_warning "No package manager caches found to clean"
+    elif (( total_cleaned > 0 )) || [[ "$DRY_RUN" == true ]]; then
         TOTAL_FREED=$((TOTAL_FREED + freed))
         if [[ "$DRY_RUN" == false ]]; then
             print_success "Package cache cleanup completed, freed $(bytes_to_human "$freed")"
         fi
-    else
-        print_warning "No package manager caches found to clean"
     fi
 }
 
@@ -2678,7 +2692,22 @@ run_analysis() {
 ################################################################################
 
 main() {
-    # Parse command-line arguments first
+    # Locate --config before anything else, then load the file BEFORE parsing
+    # the full command line so explicit CLI flags always win over the config
+    local _prev_arg=""
+    local _arg
+    for _arg in "$@"; do
+        if [[ "$_prev_arg" == "--config" ]]; then
+            CONFIG_FILE="$_arg"
+            break
+        fi
+        _prev_arg="$_arg"
+    done
+
+    # Load configuration file if it exists (precedence: defaults < config < CLI)
+    load_config
+
+    # Parse command-line arguments
     parse_arguments "$@"
 
     # Auto-disable interactive mode when stdin is not a terminal (e.g., piped one-liner)
@@ -2702,9 +2731,6 @@ main() {
 
     # Set up error handling
     setup_error_handling
-
-    # Load configuration file if it exists
-    load_config
 
     # Apply safety profile
     apply_profile
