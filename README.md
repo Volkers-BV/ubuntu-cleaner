@@ -1,13 +1,13 @@
 # Ubuntu Log Cleaner
 
-**Version 3.1.0** - A comprehensive system maintenance script for Ubuntu servers that performs automated cleanup tasks to free disk space and maintain system health.
+**Version 3.2.0** - A comprehensive system maintenance script for Ubuntu servers that performs automated cleanup tasks to free disk space and maintain system health.
 
 ## Features
 
 ### Core Cleanup Operations (Always Available)
 
 - **Remove Old Kernels** - Safely removes old kernel versions while keeping the current kernel + 1 previous version for rollback safety
-- **Vacuum Systemd Journal** - Cleans systemd journal logs (configurable retention period, default: 7 days)
+- **Vacuum Systemd Journal** - Rotates active journal files, then vacuums archived logs (configurable retention period, default: 7 days)
 - **Remove Compressed Logs** - Deletes .gz compressed log files from `/var/log/`
 - **Clean APT Cache** - Clears package manager cache and removes orphaned packages
 - **Remove Old Snap Revisions** - Removes disabled snap package revisions
@@ -300,6 +300,7 @@ sudo ./logcleaner.sh --temp-age 14 --journal-days 3 --kernel-keep 2
 - `--temp-age DAYS` - Age threshold for temporary files (default: 7)
 - `--journal-days DAYS` - Days to keep journal logs (default: 7)
 - `--kernel-keep N` - Number of old kernels to keep (default: 1)
+- `--only-if-usage PCT` - Skip the run unless root filesystem usage is at least PCT percent (useful for cron jobs)
 
 ### Safety Profiles
 
@@ -392,7 +393,9 @@ Settings are applied in this order (later overrides earlier):
 
 - **Dry-Run Mode**: Preview all changes before executing with `--dry-run`
 - **Interactive Confirmation**: Prompts user before cleanup (can be disabled with `--yes`)
-- **Lock File Protection**: Prevents multiple instances from running simultaneously
+- **Lock File Protection**: Prevents multiple instances from running simultaneously (atomic `flock`, auto-released even if the process is killed)
+- **Protected Temp Paths**: Never touches live session/service files in `/tmp` (`systemd-private-*`, X11/ICE sockets, `ssh-*`, `tmux-*`, `screen`)
+- **Service Restore on Failure**: Services stopped with `--stop-services` are restarted by the exit handler even if cleanup aborts mid-run
 - **Kernel Safety**: Always keeps the currently running kernel plus N previous versions
 - **Error Handling**: Uses `set -euo pipefail` for strict error handling with automatic cleanup on error
 - **Root Check**: Verifies the script is run with appropriate privileges

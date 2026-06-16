@@ -1,9 +1,13 @@
 VERSIONS := 18.04 20.04 22.04 24.04
 
-.PHONY: test test-unit test-integration \
+.PHONY: lint test test-unit test-integration \
 	test-1804 test-2004 test-2204 test-2404 \
 	shell-1804 shell-2004 shell-2204 shell-2404 \
 	build
+
+## Lint the main script (same check CI runs)
+lint:
+	shellcheck logcleaner.sh
 
 ## Run all tests across all Ubuntu versions
 test: build

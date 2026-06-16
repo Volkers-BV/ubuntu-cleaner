@@ -19,12 +19,6 @@
 # Suppress all non-essential output
 # QUIET=false
 
-# Create backup archive before deletion
-# CREATE_BACKUP=false
-
-# Directory for backup archives
-# BACKUP_DIR="/var/backups/logcleaner"
-
 ################################################################################
 # Cleanup Configuration
 ################################################################################
@@ -166,7 +160,6 @@ LOG_FILE="/var/log/logcleaner.log"
 # PRODUCTION SERVER - Conservative with comprehensive logging
 # INTERACTIVE=true
 # LOG_TO_FILE=true
-# CREATE_BACKUP=true
 # TEMP_FILE_AGE=14
 # JOURNAL_KEEP_DAYS=14
 # KERNEL_KEEP_COUNT=2
@@ -178,3 +171,11 @@ LOG_FILE="/var/log/logcleaner.log"
 # Or customize a profile with overrides:
 # CLEANUP_PROFILE="moderate"
 # CLEANUP_NETDATA=false  # Override: don't touch Netdata
+
+################################################################################
+# Conditional Execution
+################################################################################
+
+# Skip the run entirely unless root filesystem usage is at least this
+# percentage (0 = always run). Useful for cron jobs.
+# ONLY_IF_USAGE=85
